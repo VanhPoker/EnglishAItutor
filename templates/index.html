@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>English AI Tutor</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">🎓 English AI Tutor</span>
+      <p class="tagline">Your personal AI-powered English learning companion</p>
+    </div>
+  </header>
+
+  <main>
+    <nav class="mode-tabs" role="tablist" aria-label="Learning modes">
+      <button class="tab active" data-mode="conversation" role="tab" aria-selected="true">
+        💬 Conversation
+      </button>
+      <button class="tab" data-mode="grammar" role="tab" aria-selected="false">
+        ✏️ Grammar Check
+      </button>
+      <button class="tab" data-mode="vocabulary" role="tab" aria-selected="false">
+        📚 Vocabulary
+      </button>
+    </nav>
+
+    <section class="mode-description" id="mode-description">
+      Practice natural English conversation. Type anything and get friendly corrections and tips!
+    </section>
+
+    <div class="chat-container">
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-label="Chat messages">
+        <div class="message assistant">
+          <div class="bubble">
+            👋 Hello! I'm your English AI Tutor. Let's practice conversation — just say anything!
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <textarea
+          id="user-input"
+          placeholder="Type your message here..."
+          rows="2"
+          aria-label="Your message"
+        ></textarea>
+        <div class="input-actions">
+          <button id="send-btn" class="btn-primary">Send</button>
+          <button id="clear-btn" class="btn-secondary">Clear Chat</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>Powered by OpenAI · <a href="https://github.com/VanhPoker/EnglishAItutor" target="_blank" rel="noopener noreferrer">GitHub</a></p>
+  </footer>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
