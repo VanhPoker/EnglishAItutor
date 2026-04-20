@@ -24,6 +24,7 @@ function getLiveKitUrl() {
 
 export function useLiveKit() {
   const roomRef = useRef<Room | null>(null);
+  const sendingRef = useRef(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
@@ -65,6 +66,16 @@ export function useLiveKit() {
 
       // Text stream from agent
       room.registerTextStreamHandler(CHAT_TOPIC, async (reader, participantIdentity) => {
+        const streamIdentity =
+          typeof participantIdentity === "string"
+            ? participantIdentity
+            : participantIdentity.identity;
+
+        if (streamIdentity === room.localParticipant.identity) {
+          await reader.readAll().catch(() => "");
+          return;
+        }
+
         // This is a streaming response — accumulate chunks
         let fullText = "";
         const textStream = reader as any;
@@ -99,15 +110,20 @@ export function useLiveKit() {
 
   const sendText = useCallback(async (text: string) => {
     const room = roomRef.current;
-    if (!room) return;
+    if (!room || sendingRef.current) return;
 
+    sendingRef.current = true;
     addMessage({ role: "user", content: text });
 
-    const writer = await room.localParticipant.streamText({
-      topic: CHAT_TOPIC,
-    });
-    await writer.write(text);
-    await writer.close();
+    try {
+      const writer = await room.localParticipant.streamText({
+        topic: CHAT_TOPIC,
+      });
+      await writer.write(text);
+      await writer.close();
+    } finally {
+      sendingRef.current = false;
+    }
   }, [addMessage]);
 
   const toggleMicrophone = useCallback(async () => {

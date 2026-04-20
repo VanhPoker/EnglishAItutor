@@ -177,11 +177,18 @@ async def entrypoint(ctx: JobContext):
             chat_ctx.add_message(role="user", content=text, interrupted=True)
             stream = session.llm.chat(chat_ctx=chat_ctx)
 
+            response_parts: list[str] = []
             writer = await ctx.room.local_participant.stream_text(topic=FE_CHAT_TOPIC)
             async for chunk in stream:
                 if chunk.delta and chunk.delta.content:
-                    await writer.write(chunk.delta.content)
+                    content = chunk.delta.content
+                    response_parts.append(content)
+                    await writer.write(content)
             await writer.aclose()
+
+            response_text = "".join(response_parts).strip()
+            if response_text:
+                await session.say(response_text, allow_interruptions=False)
 
             # After response, persist any errors detected by assess node
             if db_session_id:

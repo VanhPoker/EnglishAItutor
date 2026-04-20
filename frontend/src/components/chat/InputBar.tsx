@@ -1,8 +1,8 @@
-import { useState, useRef, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Send } from "lucide-react";
 
 interface InputBarProps {
-  onSend: (text: string) => void;
+  onSend: (text: string) => Promise<void> | void;
   disabled?: boolean;
   placeholder?: string;
 }
@@ -13,22 +13,66 @@ export default function InputBar({
   placeholder = "Type your message in English...",
 }: InputBarProps) {
   const [text, setText] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef("");
+  const isSendingRef = useRef(false);
+  const isComposingRef = useRef(false);
 
-  const handleSend = () => {
-    const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setText("");
-    inputRef.current?.focus();
+  const setInputText = (value: string) => {
+    textRef.current = value;
+    setText(value);
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const resetInput = () => {
+    setInputText("");
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      inputRef.current.style.height = "44px";
     }
   };
+
+  const handleSend = async () => {
+    if (isSendingRef.current) return;
+
+    const trimmed = textRef.current.trim();
+    if (!trimmed || disabled) return;
+
+    isSendingRef.current = true;
+    setIsSending(true);
+    resetInput();
+
+    try {
+      await onSend(trimmed);
+    } finally {
+      isSendingRef.current = false;
+      setIsSending(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const nativeEvent = e.nativeEvent as KeyboardEvent["nativeEvent"] & {
+      isComposing?: boolean;
+    };
+
+    if (nativeEvent.isComposing || isComposingRef.current || e.key === "Process") {
+      return;
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void handleSend();
+    }
+  };
+
+  const handleInput = (target: HTMLTextAreaElement) => {
+    textRef.current = target.value;
+    target.style.height = "auto";
+    target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
+  };
+
+  const isDisabled = disabled || isSending;
 
   return (
     <div className="border-t border-gray-200/50 bg-white/50 backdrop-blur-sm p-3">
@@ -36,10 +80,18 @@ export default function InputBar({
         <textarea
           ref={inputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => setInputText(e.target.value)}
+          onInput={(e) => handleInput(e.target as HTMLTextAreaElement)}
+          onCompositionStart={() => {
+            isComposingRef.current = true;
+          }}
+          onCompositionEnd={(e) => {
+            isComposingRef.current = false;
+            setInputText(e.currentTarget.value);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          disabled={disabled}
+          disabled={isDisabled}
           rows={1}
           className="
             flex-1 resize-none rounded-xl border border-gray-200 px-4 py-3
@@ -49,15 +101,10 @@ export default function InputBar({
             max-h-32
           "
           style={{ minHeight: "44px" }}
-          onInput={(e) => {
-            const target = e.target as HTMLTextAreaElement;
-            target.style.height = "auto";
-            target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
-          }}
         />
         <button
-          onClick={handleSend}
-          disabled={disabled || !text.trim()}
+          onClick={() => void handleSend()}
+          disabled={isDisabled || !text.trim()}
           className="
             p-3 rounded-xl bg-primary-600 text-white
             hover:bg-primary-700 active:bg-primary-800
