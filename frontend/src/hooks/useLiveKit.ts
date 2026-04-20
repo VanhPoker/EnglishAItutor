@@ -31,8 +31,7 @@ export function useLiveKit() {
     ConnectionState.Disconnected
   );
 
-  const { addMessage, updateLastAssistantMessage, setConnected, setCurrentTranscript } =
-    useChatStore();
+  const { addMessage, setConnected, setCurrentTranscript } = useChatStore();
 
   const connect = useCallback(
     async (req: TokenRequest) => {
@@ -137,40 +136,25 @@ export function useLiveKit() {
         }
       });
 
-      // Text stream from agent
-      room.registerTextStreamHandler(CHAT_TOPIC, async (reader, participantIdentity) => {
-        const streamIdentity =
-          typeof participantIdentity === "string"
-            ? participantIdentity
-            : participantIdentity.identity;
-
-        if (streamIdentity === room.localParticipant.identity) {
-          await reader.readAll().catch(() => "");
-          return;
-        }
-
-        // This is a streaming response — accumulate chunks
-        let fullText = "";
+      // Text streams on this topic are used for typed user input. Older backend
+      // builds also sent assistant text here, so drain remote streams and let
+      // the final LiveKit transcription be the only assistant bubble source.
+      room.registerTextStreamHandler(CHAT_TOPIC, async (reader) => {
         const textStream = reader as any;
-
         if (typeof textStream.readAll === "function") {
-          fullText = await textStream.readAll();
-          addMessage({ role: "assistant", content: fullText });
+          await textStream.readAll().catch(() => "");
         } else if (typeof textStream[Symbol.asyncIterator] === "function") {
           for await (const chunk of textStream) {
-            fullText += chunk;
-            updateLastAssistantMessage(chunk);
+            void chunk;
+            // Drain the stream so LiveKit can close it cleanly.
           }
-        } else {
-          fullText = String(textStream);
-          addMessage({ role: "assistant", content: fullText });
         }
       });
 
       await room.connect(getLiveKitUrl(), token);
       return room;
     },
-    [addMessage, updateLastAssistantMessage, setConnected, setCurrentTranscript]
+    [addMessage, setConnected, setCurrentTranscript]
   );
 
   const disconnect = useCallback(() => {
