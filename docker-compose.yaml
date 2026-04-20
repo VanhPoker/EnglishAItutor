@@ -3,18 +3,20 @@ services:
   livekit:
     image: livekit/livekit-server:latest
     command: --dev --bind 0.0.0.0
+    restart: unless-stopped
     ports:
       - "7880:7880"   # WebSocket
       - "7881:7881"   # HTTP API
       - "7882:7882/udp"  # WebRTC/UDP
     environment:
-      - "LIVEKIT_KEYS=devkey: secret"
+      - "LIVEKIT_KEYS=${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
 
   # --- PostgreSQL + pgvector ---
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     ports:
-      - "5454:5432"
+      - "127.0.0.1:5454:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -32,16 +34,20 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: ["uvicorn", "app.helper_api:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.helper_api:app --host 0.0.0.0 --port 8080"]
+    restart: unless-stopped
     ports:
       - "8080:8080"
     env_file:
       - ./backend/.env
-    volumes:
-      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 
   # --- Backend: LiveKit Agent Worker ---
   agent:
@@ -49,27 +55,28 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: ["python", "-m", "app.main", "dev"]
+    restart: unless-stopped
     env_file:
       - ./backend/.env
-    volumes:
-      - ./backend:/app
     depends_on:
-      - livekit
-      - postgres
-  # --- Frontend Development ---
+      livekit:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  # --- Frontend ---
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "5173:5173"
-    environment:
-      - VITE_LIVEKIT_URL=ws://localhost:7880
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

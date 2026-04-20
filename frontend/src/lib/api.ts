@@ -5,8 +5,12 @@ const API_BASE = "/api";
 function authHeaders(): Record<string, string> {
   const stored = localStorage.getItem("auth-storage");
   if (stored) {
-    const { state } = JSON.parse(stored);
-    if (state?.token) return { Authorization: `Bearer ${state.token}` };
+    try {
+      const { state } = JSON.parse(stored);
+      if (state?.token) return { Authorization: `Bearer ${state.token}` };
+    } catch {
+      localStorage.removeItem("auth-storage");
+    }
   }
   return {};
 }
@@ -63,8 +67,8 @@ export async function getMe() {
 // ── Token API ───────────────────────────────────────────────────
 
 export interface TokenRequest {
-  userId: string;
-  userName: string;
+  userId?: string;
+  userName?: string;
   topic?: string;
   level?: string;
 }

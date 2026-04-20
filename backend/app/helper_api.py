@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+from app.core.settings import settings
 from app.router.auth import router as auth_router
 from app.router.sessions import router as sessions_router
 from app.router.token import router as token_router
@@ -19,7 +20,7 @@ app = FastAPI(title="English Agent API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

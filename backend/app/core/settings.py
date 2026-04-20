@@ -14,6 +14,8 @@ from app.schema.models import (
     Provider,
 )
 
+DEFAULT_JWT_SECRET = "english-tutor-secret-key-change-in-production"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     # API Server
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8080
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://4.145.98.216:5173"
 
     # LLM API Keys
     OPENAI_API_KEY: SecretStr | None = None
@@ -59,7 +62,7 @@ class Settings(BaseSettings):
     POSTGRES_MEM0_DB: str = "localhost"
 
     # Auth
-    JWT_SECRET_KEY: str = "english-tutor-secret-key-change-in-production"
+    JWT_SECRET_KEY: str = DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
 
@@ -86,6 +89,11 @@ class Settings(BaseSettings):
         )
 
     def model_post_init(self, __context: Any) -> None:
+        if self.JWT_SECRET_KEY == DEFAULT_JWT_SECRET:
+            if not self.is_dev():
+                raise ValueError("JWT_SECRET_KEY must be set outside development mode.")
+            logger.warning("Using development JWT_SECRET_KEY. Set a strong value before production.")
+
         api_keys = {
             Provider.OPENAI: self.OPENAI_API_KEY,
             Provider.ANTHROPIC: self.ANTHROPIC_API_KEY,
@@ -125,6 +133,10 @@ class Settings(BaseSettings):
 
     def is_dev(self) -> bool:
         return self.MODE == "dev"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
 settings = Settings()

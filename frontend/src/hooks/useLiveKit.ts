@@ -11,8 +11,16 @@ import {
 import { getToken, type TokenRequest } from "../lib/api";
 import { useChatStore } from "../stores/chatStore";
 
-const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL || "ws://localhost:7880";
 const CHAT_TOPIC = "ai-text-stream";
+
+function getLiveKitUrl() {
+  if (import.meta.env.VITE_LIVEKIT_URL) {
+    return import.meta.env.VITE_LIVEKIT_URL;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.hostname}:7880`;
+}
 
 export function useLiveKit() {
   const roomRef = useRef<Room | null>(null);
@@ -75,7 +83,7 @@ export function useLiveKit() {
         }
       });
 
-      await room.connect(LIVEKIT_URL, token);
+      await room.connect(getLiveKitUrl(), token);
       return room;
     },
     [addMessage, updateLastAssistantMessage, setConnected]

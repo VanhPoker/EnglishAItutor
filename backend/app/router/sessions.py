@@ -1,6 +1,6 @@
 """Sessions & Dashboard router — session history, stats, progress."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -12,6 +12,10 @@ from app.database.connection import get_session_factory
 from app.database.models import ErrorLog, PracticeSession, User
 
 router = APIRouter(tags=["Sessions"])
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.utcnow()
 
 
 # ── Schemas ──────────────────────────────────────────────────────
@@ -105,7 +109,7 @@ async def end_session(session_id: str, req: SessionUpdate, user: User = Depends(
 
         for key, value in req.model_dump(exclude_none=True).items():
             setattr(session, key, value)
-        session.ended_at = datetime.now(timezone.utc)
+        session.ended_at = _utc_now_naive()
 
         await db.commit()
         await db.refresh(session)

@@ -1,6 +1,6 @@
 """Repository helpers for agent to persist sessions and errors directly."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from loguru import logger
@@ -8,6 +8,10 @@ from sqlalchemy import select
 
 from app.database.connection import get_session_factory
 from app.database.models import ErrorLog, PracticeSession
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.utcnow()
 
 
 async def create_practice_session(
@@ -67,7 +71,7 @@ async def end_practice_session(
             session.vocabulary_score = vocabulary_score
             session.fluency_score = fluency_score
             session.stats_json = stats_json
-            session.ended_at = datetime.now(timezone.utc)
+            session.ended_at = _utc_now_naive()
 
             await db.commit()
             logger.info(f"Ended session {session_id}: turns={total_turns}, errors={total_errors}")

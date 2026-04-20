@@ -3,19 +3,21 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from livekit import api
 from livekit.api import RoomAgentDispatch, RoomConfiguration
 from pydantic import BaseModel
 
+from app.core.auth import get_current_user
 from app.core.settings import settings
+from app.database.models import User
 
 logger = logging.getLogger(__name__)
 
 
 class TokenRequest(BaseModel):
-    userId: str
-    userName: str
+    userId: Optional[str] = None
+    userName: Optional[str] = None
     topic: Optional[str] = None
     level: Optional[str] = None  # CEFR level: A1-C2
 
@@ -72,12 +74,14 @@ def create_token(user_id: str, user_name: str, topic: str | None, level: str | N
 
 
 @router.post("/token", response_model=TokenResponse)
-async def get_token(request: TokenRequest):
-    if not request.userId or not request.userName:
-        raise HTTPException(status_code=400, detail="Missing required fields: userId, userName")
-
+async def get_token(request: TokenRequest, user: User = Depends(get_current_user)):
     try:
-        result = create_token(request.userId, request.userName, request.topic, request.level)
+        result = create_token(
+            user_id=user.id,
+            user_name=user.name,
+            topic=request.topic,
+            level=request.level or user.cefr_level,
+        )
         return TokenResponse(**result)
     except Exception as error:
         logger.error(f"Error creating token: {error}")
@@ -85,10 +89,10 @@ async def get_token(request: TokenRequest):
 
 
 @router.get("/token")
-async def get_token_default():
+async def get_token_default(user: User = Depends(get_current_user)):
     """Quick token for development/testing."""
     try:
-        result = create_token("dev-user", "Developer", "free_conversation", "B1")
+        result = create_token(user.id, user.name, "free_conversation", user.cefr_level)
         return result
     except Exception as error:
         logger.error(f"Error creating token: {error}")
