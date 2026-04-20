@@ -25,11 +25,13 @@ function getLiveKitUrl() {
 export function useLiveKit() {
   const roomRef = useRef<Room | null>(null);
   const sendingRef = useRef(false);
+  const finalTranscriptIdsRef = useRef<Set<string>>(new Set());
+  const transcriptContentRef = useRef<Map<string, number>>(new Map());
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
 
-  const { addMessage, updateLastAssistantMessage, setConnected, setAgentSpeaking, setUserSpeaking } =
+  const { addMessage, updateLastAssistantMessage, setConnected, setCurrentTranscript } =
     useChatStore();
 
   const connect = useCallback(
@@ -62,6 +64,77 @@ export function useLiveKit() {
 
       room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
         track.detach().forEach((el) => el.remove());
+      });
+
+      const normalizeTranscript = (value: string) =>
+        value.trim().replace(/\s+/g, " ").toLowerCase();
+
+      const hasRecentMessage = (role: "user" | "assistant", content: string) => {
+        const now = Date.now();
+        const normalized = normalizeTranscript(content);
+        return useChatStore
+          .getState()
+          .messages.some(
+            (message) =>
+              message.role === role &&
+              normalizeTranscript(message.content) === normalized &&
+              now - message.timestamp < 12_000
+          );
+      };
+
+      const addTranscriptMessage = (
+        role: "user" | "assistant",
+        content: string,
+        segmentId: string
+      ) => {
+        const trimmed = content.trim();
+        if (!trimmed) return;
+
+        if (segmentId && finalTranscriptIdsRef.current.has(segmentId)) {
+          return;
+        }
+
+        const key = `${role}:${normalizeTranscript(trimmed)}`;
+        const now = Date.now();
+        const lastSeen = transcriptContentRef.current.get(key);
+        if (lastSeen && now - lastSeen < 2_000) {
+          return;
+        }
+
+        if (hasRecentMessage(role, trimmed)) {
+          transcriptContentRef.current.set(key, now);
+          if (segmentId) finalTranscriptIdsRef.current.add(segmentId);
+          return;
+        }
+
+        transcriptContentRef.current.set(key, now);
+        if (segmentId) finalTranscriptIdsRef.current.add(segmentId);
+        addMessage({ role, content: trimmed });
+
+        if (finalTranscriptIdsRef.current.size > 200) {
+          finalTranscriptIdsRef.current = new Set(
+            Array.from(finalTranscriptIdsRef.current).slice(-100)
+          );
+        }
+      };
+
+      room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+        for (const segment of segments) {
+          const text = segment.text?.trim();
+          if (!text) continue;
+
+          const isLocal =
+            participant?.identity === room.localParticipant.identity;
+          const role = isLocal ? "user" : "assistant";
+          const label = isLocal ? "You" : "Tutor";
+
+          if (segment.final) {
+            setCurrentTranscript("");
+            addTranscriptMessage(role, text, segment.id);
+          } else {
+            setCurrentTranscript(`${label}: ${text}`);
+          }
+        }
       });
 
       // Text stream from agent
@@ -97,7 +170,7 @@ export function useLiveKit() {
       await room.connect(getLiveKitUrl(), token);
       return room;
     },
-    [addMessage, updateLastAssistantMessage, setConnected]
+    [addMessage, updateLastAssistantMessage, setConnected, setCurrentTranscript]
   );
 
   const disconnect = useCallback(() => {
@@ -105,8 +178,9 @@ export function useLiveKit() {
       roomRef.current.disconnect();
       roomRef.current = null;
       setConnected(false);
+      setCurrentTranscript("");
     }
-  }, [setConnected]);
+  }, [setConnected, setCurrentTranscript]);
 
   const sendText = useCallback(async (text: string) => {
     const room = roomRef.current;
