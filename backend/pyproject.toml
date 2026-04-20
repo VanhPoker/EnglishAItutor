@@ -8,6 +8,7 @@ dependencies = [
     # LiveKit
     "livekit~=1.0",
     "livekit-agents[silero,turn-detector]~=1.0",
+    "livekit-plugins-google~=1.0",
 
     # LangChain / LangGraph
     "langchain>=0.3.25",
@@ -35,6 +36,11 @@ dependencies = [
     # STT/TTS
     "faster-whisper>=1.1.0",
     "edge-tts>=7.0.0",
+
+    # Auth
+    "bcrypt>=4.0,<4.1",
+    "python-jose[cryptography]>=3.3",
+    "email-validator>=2.0",
 
     # Config & Utils
     "pydantic>=2.0",

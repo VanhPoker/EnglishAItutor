@@ -19,11 +19,18 @@ from livekit.agents import (
     RoomInputOptions,
     metrics,
 )
-from livekit.plugins.silero.vad import _VADOptions
+from livekit.plugins import silero
 
+from app.agents.english_tutor.edge_tts_plugin import EdgeTTS
 from app.agents.english_tutor.graph import create_english_tutor_graph
+from app.agents.english_tutor.whisper_stt import WhisperSTT
 from app.core.langgraph_adapter import LangGraphAdapter
 from app.core.settings import settings
+from app.database.session_repo import (
+    create_practice_session,
+    end_practice_session,
+    log_error,
+)
 from app.memory.client import MemoryManager, initialize_memory_client
 
 FE_CHAT_TOPIC = os.getenv("FE_CHAT_TOPIC", "ai-text-stream")
@@ -48,7 +55,6 @@ async def _get_memory_manager() -> Optional[MemoryManager]:
 def prewarm(proc: JobProcess):
     """Pre-warm resources before the agent starts accepting jobs."""
     logger.info("English Tutor Agent pre-warming...")
-    # VAD will be loaded by LiveKit's built-in silero plugin
 
 
 async def entrypoint(ctx: JobContext):
@@ -98,9 +104,13 @@ async def entrypoint(ctx: JobContext):
         },
     }
 
-    # ── Create agent session with LangGraphAdapter ───────────────
+    # ── Create agent session with TTS + STT + LLM ───────────────
     session = AgentSession(
         llm=LangGraphAdapter(graph=graph, config=graph_config),
+        tts=EdgeTTS(voice="en-US-JennyNeural"),
+        stt=WhisperSTT(model_size="base.en"),
+        vad=silero.VAD.load(),
+        allow_interruptions=False,
     )
 
     # ── Event handlers ───────────────────────────────────────────
@@ -112,6 +122,19 @@ async def entrypoint(ctx: JobContext):
     # ── Connect and wait for participant ─────────────────────────
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     participant = await ctx.wait_for_participant()
+
+    # ── Persist session to DB ────────────────────────────────────
+    db_session_id: Optional[str] = None
+    if user_id and user_id != "anonymous":
+        db_session_id = await create_practice_session(
+            user_id=user_id,
+            room_name=ctx.room.name,
+            topic=topic,
+            level=level,
+        )
+
+    # Track stats during session
+    session_stats = {"turns": 0, "errors": 0, "corrections": 0}
 
     # ── Generate greeting ────────────────────────────────────────
     topic_display = topic.replace("_", " ")
@@ -139,24 +162,49 @@ async def entrypoint(ctx: JobContext):
         ),
     )
 
-    # Send greeting
+    # Send greeting via both text stream and voice
     await ctx.room.local_participant.send_text(topic=FE_CHAT_TOPIC, text=greeting)
     await session.say(greeting, allow_interruptions=False)
 
     # ── Handle text chat messages ────────────────────────────────
     async def handle_text_stream_async(reader, participant_identity):
-        text = await reader.read_all()
-        logger.info(f"Text from {participant_identity}: {text}")
+        try:
+            text = await reader.read_all()
+            logger.info(f"Text from {participant_identity}: {text}")
+            session_stats["turns"] += 1
 
-        chat_ctx = session._chat_ctx.copy()
-        chat_ctx.add_message(role="user", content=text, interrupted=True)
-        stream = session.llm.chat(chat_ctx=chat_ctx)
+            chat_ctx = session._chat_ctx.copy()
+            chat_ctx.add_message(role="user", content=text, interrupted=True)
+            stream = session.llm.chat(chat_ctx=chat_ctx)
 
-        writer = await ctx.room.local_participant.stream_text(topic=FE_CHAT_TOPIC)
-        async for chunk in stream:
-            if chunk.delta and chunk.delta.content:
-                await writer.write(chunk.delta.content)
-        await writer.aclose()
+            writer = await ctx.room.local_participant.stream_text(topic=FE_CHAT_TOPIC)
+            async for chunk in stream:
+                if chunk.delta and chunk.delta.content:
+                    await writer.write(chunk.delta.content)
+            await writer.aclose()
+
+            # After response, persist any errors detected by assess node
+            if db_session_id:
+                try:
+                    state = await graph.aget_state(graph_config)
+                    errors = (state.values or {}).get("errors_detected", []) if state else []
+                    for err in errors:
+                        session_stats["errors"] += 1
+                        await log_error(
+                            session_id=db_session_id,
+                            user_id=user_id,
+                            error_type=err.get("error_type", "grammar"),
+                            original_text=err.get("original", ""),
+                            corrected_text=err.get("correction", ""),
+                            explanation=err.get("explanation"),
+                        )
+                    route = (state.values or {}).get("route") if state else None
+                    if route == "correct":
+                        session_stats["corrections"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to persist errors: {e}")
+        except Exception as e:
+            logger.error(f"Error handling text stream: {e}", exc_info=True)
 
     def handle_text_stream(reader, participant_identity):
         task = asyncio.create_task(handle_text_stream_async(reader, participant_identity))
@@ -168,8 +216,11 @@ async def entrypoint(ctx: JobContext):
     # ── Metrics & logging ────────────────────────────────────────
     @session.on("metrics_collected")
     def on_metrics_collected(mtrcs: metrics.AgentMetrics):
-        metrics.log_metrics(mtrcs)
-        usage_collector.collect(mtrcs)
+        try:
+            metrics.log_metrics(mtrcs)
+            usage_collector.collect(mtrcs)
+        except Exception:
+            pass
 
     @session.on("agent_started_speaking")
     def on_agent_started_speaking():
@@ -184,6 +235,25 @@ async def entrypoint(ctx: JobContext):
         duration = (time.time() - start_time) / 60
         summary = usage_collector.get_summary()
         logger.info(f"Session ended. Duration: {duration:.1f}min, Usage: {summary}")
+
+        if db_session_id:
+            # Compute simple quality scores: fewer errors per turn = higher
+            turns = max(session_stats["turns"], 1)
+            error_rate = session_stats["errors"] / turns
+            grammar_score = max(0, min(100, int(100 - error_rate * 30)))
+            vocabulary_score = max(0, min(100, int(95 - error_rate * 25)))
+            fluency_score = max(0, min(100, int(90 - error_rate * 20)))
+
+            await end_practice_session(
+                session_id=db_session_id,
+                total_turns=session_stats["turns"],
+                total_errors=session_stats["errors"],
+                corrections_given=session_stats["corrections"],
+                duration_minutes=round(duration, 2),
+                grammar_score=grammar_score,
+                vocabulary_score=vocabulary_score,
+                fluency_score=fluency_score,
+            )
 
     ctx.add_shutdown_callback(cleanup)
 

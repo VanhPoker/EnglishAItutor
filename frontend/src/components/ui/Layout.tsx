@@ -1,6 +1,7 @@
-import { Link, useLocation } from "react-router-dom";
-import { BookOpen, Home, BarChart3 } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { BookOpen, Home, BarChart3, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
+import { useAuthStore } from "../../stores/authStore";
 
 interface LayoutProps {
   children: ReactNode;
@@ -14,6 +15,13 @@ const navItems = [
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuthStore();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -45,6 +53,19 @@ export default function Layout({ children }: LayoutProps) {
                 {label}
               </Link>
             ))}
+
+            {user && (
+              <div className="flex items-center gap-3 ml-4 pl-4 border-l border-gray-200">
+                <span className="text-sm text-gray-600">{user.name}</span>
+                <button
+                  onClick={handleLogout}
+                  className="p-2 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
+                  title="Logout"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </nav>
         </div>
       </header>

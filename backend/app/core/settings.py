@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     POSTGRES_MEM0_PORT: str = "5432"
     POSTGRES_MEM0_DB: str = "localhost"
 
+    # Auth
+    JWT_SECRET_KEY: str = "english-tutor-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+
     # LangGraph checkpoint
     CHECKPOINT_TABLES: list[str] = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
 

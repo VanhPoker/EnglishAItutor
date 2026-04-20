@@ -8,13 +8,13 @@ services:
       - "7881:7881"   # HTTP API
       - "7882:7882/udp"  # WebRTC/UDP
     environment:
-      - LIVEKIT_KEYS=devkey: secret
+      - "LIVEKIT_KEYS=devkey: secret"
 
   # --- PostgreSQL + pgvector ---
   postgres:
     image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "5454:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -56,6 +56,20 @@ services:
     depends_on:
       - livekit
       - postgres
+  # --- Frontend Development ---
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_LIVEKIT_URL=ws://localhost:7880
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - api
 
 volumes:
   pgdata:
