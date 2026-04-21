@@ -229,6 +229,68 @@ export async function getDashboard(): Promise<DashboardStats> {
   return apiFetch<DashboardStats>(`${API_BASE}/dashboard`);
 }
 
+// ── Admin API ───────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  native_language: string;
+  cefr_level: string;
+  role: AuthUser["role"];
+  created_at: string;
+  updated_at: string;
+  session_count: number;
+  total_minutes: number;
+  last_session_at: string | null;
+}
+
+export interface AdminUsersResponse {
+  total: number;
+  users: AdminUser[];
+}
+
+export interface AdminBootstrapStatus {
+  admin_exists: boolean;
+}
+
+export async function getAdminUsers(params: {
+  search?: string;
+  role?: AuthUser["role"] | "all";
+  limit?: number;
+  offset?: number;
+} = {}): Promise<AdminUsersResponse> {
+  const qs = new URLSearchParams();
+  if (params.search?.trim()) qs.set("search", params.search.trim());
+  if (params.role && params.role !== "all") qs.set("role", params.role);
+  if (params.limit) qs.set("limit", String(params.limit));
+  if (params.offset) qs.set("offset", String(params.offset));
+
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch<AdminUsersResponse>(`${API_BASE}/admin/users${suffix}`);
+}
+
+export async function updateAdminUser(
+  userId: string,
+  data: Partial<Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role">>
+): Promise<AdminUser> {
+  return apiFetch<AdminUser>(`${API_BASE}/admin/users/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getAdminBootstrapStatus(): Promise<AdminBootstrapStatus> {
+  return apiFetch<AdminBootstrapStatus>(`${API_BASE}/admin/bootstrap-status`);
+}
+
+export async function claimAdminAccess(): Promise<AuthUser> {
+  return apiFetch<AuthUser>(`${API_BASE}/admin/bootstrap`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 // ── Health ──────────────────────────────────────────────────────
 
 export async function healthCheck(): Promise<boolean> {

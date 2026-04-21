@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 load_dotenv()
 
 from app.core.settings import settings
+from app.router.admin import router as admin_router
 from app.router.auth import router as auth_router
 from app.router.sessions import router as sessions_router
 from app.router.token import router as token_router
@@ -31,6 +32,7 @@ app.add_middleware(
 logging.basicConfig(level=logging.INFO)
 
 app.include_router(auth_router, prefix="/api/auth")
+app.include_router(admin_router, prefix="/api")
 app.include_router(sessions_router, prefix="/api")
 app.include_router(token_router, prefix="/api")
 

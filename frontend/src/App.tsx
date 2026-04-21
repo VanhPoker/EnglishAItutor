@@ -7,6 +7,7 @@ import { useUserStore } from "./stores/userStore";
 import Home from "./pages/Home";
 import Practice from "./pages/Practice";
 import Dashboard from "./pages/Dashboard";
+import AdminUsers from "./pages/AdminUsers";
 import Login from "./pages/Login";
 
 function FullScreenLoader() {
@@ -35,6 +36,17 @@ function GuestRoute({ children }: { children: React.ReactNode }) {
 
   if (!isBootstrapped) return <FullScreenLoader />;
   if (isAuthenticated) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isBootstrapped = useAuthStore((s) => s.isBootstrapped);
+  const user = useAuthStore((s) => s.user);
+
+  if (!isBootstrapped) return <FullScreenLoader />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role !== "admin") return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -85,6 +97,14 @@ export default function App() {
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/users"
+        element={
+          <AdminRoute>
+            <AdminUsers />
+          </AdminRoute>
         }
       />
     </Routes>

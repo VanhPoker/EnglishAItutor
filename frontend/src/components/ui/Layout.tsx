@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { BookOpen, Home, BarChart3, LogOut } from "lucide-react";
+import { BookOpen, Home, BarChart3, LogOut, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { logoutRequest } from "../../lib/api";
 import { useAuthStore } from "../../stores/authStore";
@@ -8,16 +8,16 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const navItems = [
-  { path: "/", label: "Home", icon: Home },
-  { path: "/practice", label: "Practice", icon: BookOpen },
-  { path: "/dashboard", label: "Dashboard", icon: BarChart3 },
-];
-
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const navItems = [
+    { path: "/", label: "Home", icon: Home },
+    { path: "/practice", label: "Practice", icon: BookOpen },
+    { path: "/dashboard", label: "Dashboard", icon: BarChart3 },
+    ...(user?.role === "admin" ? [{ path: "/admin/users", label: "Users", icon: Users }] : []),
+  ];
 
   const handleLogout = async () => {
     await logoutRequest().catch(() => undefined);

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -8,9 +9,13 @@ import {
   BookOpen,
   Sparkles,
   ArrowRight,
+  Shield,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import { claimAdminAccess, getAdminBootstrapStatus } from "../lib/api";
+import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
 const features = [
@@ -55,10 +60,36 @@ const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
 export default function Home() {
   const navigate = useNavigate();
+  const authUser = useAuthStore((s) => s.user);
+  const updateAuthUser = useAuthStore((s) => s.updateUser);
   const { level, topic, setLevel, setTopic } = useUserStore();
+  const [canClaimAdmin, setCanClaimAdmin] = useState(false);
+  const [claimingAdmin, setClaimingAdmin] = useState(false);
+
+  useEffect(() => {
+    if (authUser?.role === "admin") {
+      setCanClaimAdmin(false);
+      return;
+    }
+
+    getAdminBootstrapStatus()
+      .then((status) => setCanClaimAdmin(!status.admin_exists))
+      .catch(() => setCanClaimAdmin(false));
+  }, [authUser?.role]);
 
   const handleStart = () => {
     navigate("/practice");
+  };
+
+  const handleClaimAdmin = async () => {
+    setClaimingAdmin(true);
+    try {
+      const updatedUser = await claimAdminAccess();
+      updateAuthUser(updatedUser);
+      navigate("/admin/users");
+    } finally {
+      setClaimingAdmin(false);
+    }
   };
 
   return (
@@ -83,6 +114,32 @@ export default function Home() {
             corrects your mistakes naturally, and remembers your progress.
           </p>
         </motion.div>
+
+        {canClaimAdmin && (
+          <Card className="mb-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Admin access is still unclaimed</h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Claim admin once, then manage users, levels, and roles from the admin area.
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                onClick={() => void handleClaimAdmin()}
+                loading={claimingAdmin}
+              >
+                Claim Admin
+              </Button>
+            </div>
+          </Card>
+        )}
 
         {/* Features grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
