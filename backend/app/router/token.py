@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 class TokenRequest(BaseModel):
-    userId: Optional[str] = None
-    userName: Optional[str] = None
     topic: Optional[str] = None
     level: Optional[str] = None  # CEFR level: A1-C2
 

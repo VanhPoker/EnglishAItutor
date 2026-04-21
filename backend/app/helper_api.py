@@ -6,8 +6,10 @@ Run with: uvicorn app.helper_api:app --port 8080 --reload
 import logging
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -41,6 +43,13 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    first = exc.errors()[0] if exc.errors() else {}
+    message = first.get("msg") or "Invalid request"
+    return JSONResponse(status_code=422, content={"detail": message})
 
 
 if __name__ == "__main__":

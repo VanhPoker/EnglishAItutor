@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { ConnectionState } from "livekit-client";
 import { Wifi, WifiOff, Loader2 } from "lucide-react";
 import { useLiveKit } from "../../hooks/useLiveKit";
-import { useAuthStore } from "../../stores/authStore";
 import { useUserStore } from "../../stores/userStore";
 import { useChatStore } from "../../stores/chatStore";
 import MessageList from "./MessageList";
@@ -12,10 +11,7 @@ import AudioVisualizer from "../voice/AudioVisualizer";
 
 export default function ChatRoom() {
   const { room, connectionState, connect, disconnect, sendText, toggleMicrophone } = useLiveKit();
-  const authUser = useAuthStore((s) => s.user);
   const { topic, level } = useUserStore();
-  const userId = authUser?.id || `user-${Date.now()}`;
-  const userName = authUser?.name || "Learner";
   const isConnected = useChatStore((s) => s.isConnected);
   const [micEnabled, setMicEnabled] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -23,13 +19,13 @@ export default function ChatRoom() {
   const handleConnect = useCallback(async () => {
     setConnecting(true);
     try {
-      await connect({ userId, userName, topic, level });
+      await connect({ topic, level });
     } catch (err) {
       console.error("Failed to connect:", err);
     } finally {
       setConnecting(false);
     }
-  }, [connect, userId, userName, topic, level]);
+  }, [connect, topic, level]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();

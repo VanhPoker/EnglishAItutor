@@ -64,7 +64,11 @@ class Settings(BaseSettings):
     # Auth
     JWT_SECRET_KEY: str = DEFAULT_JWT_SECRET
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+    JWT_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    REFRESH_COOKIE_NAME: str = "english_refresh_token"
+    REFRESH_COOKIE_SECURE: bool = False
+    REFRESH_COOKIE_SAMESITE: str = "lax"
 
     # LangGraph checkpoint
     CHECKPOINT_TABLES: list[str] = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
@@ -93,6 +97,9 @@ class Settings(BaseSettings):
             if not self.is_dev():
                 raise ValueError("JWT_SECRET_KEY must be set outside development mode.")
             logger.warning("Using development JWT_SECRET_KEY. Set a strong value before production.")
+
+        if not self.REFRESH_COOKIE_SECURE and not self.is_dev():
+            logger.warning("REFRESH_COOKIE_SECURE is disabled outside development.")
 
         api_keys = {
             Provider.OPENAI: self.OPENAI_API_KEY,
