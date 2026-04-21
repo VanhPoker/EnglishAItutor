@@ -7,7 +7,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from app.database.connection import get_session_factory
-from app.database.models import ErrorLog, PracticeSession
+from app.database.models import ErrorLog, PracticeSession, User
 
 
 def _utc_now_naive() -> datetime:
@@ -103,3 +103,23 @@ async def log_error(
             await db.commit()
     except Exception as e:
         logger.error(f"Failed to log error: {e}")
+
+
+async def update_user_cefr_level(user_id: str, cefr_level: str) -> None:
+    """Persist a more evidence-based CEFR level for future sessions."""
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                logger.warning(f"User {user_id} not found for CEFR update")
+                return
+            if user.cefr_level == cefr_level:
+                return
+
+            user.cefr_level = cefr_level
+            await db.commit()
+            logger.info(f"Updated user {user_id} CEFR level to {cefr_level}")
+    except Exception as e:
+        logger.error(f"Failed to update user CEFR level: {e}")

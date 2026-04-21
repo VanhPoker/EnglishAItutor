@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.agents.english_tutor.models import EnglishTutorState, TopicSuggestion
 from app.agents.english_tutor.prompts import TOPIC_PROMPT
+from app.agents.english_tutor.session_metrics import normalize_level, summarize_personalization_context
 from app.core.llm import get_model
 from app.core.settings import settings
 
@@ -16,10 +17,17 @@ async def topic_node(state: EnglishTutorState, config: RunnableConfig) -> dict:
     """
     Generate a topic change with an engaging transition.
     """
-    level = state.get("user_level", "B1")
-    previous_topic = state.get("current_topic", "free_conversation")
+    metadata = config.get("metadata", {})
+    base_level = normalize_level(state.get("user_level") or metadata.get("level"), "B1")
+    level = normalize_level(state.get("working_level") or base_level, base_level)
+    previous_topic = state.get("current_topic") or metadata.get("topic", "free_conversation")
     session_stats = state.get("session_stats", {})
-    memory_prompt = config.get("metadata", {}).get("memory_prompt", "No previous memories.")
+    memory_prompt = state.get("memory_prompt") or metadata.get("memory_prompt", "No previous memories.")
+    session_context = state.get("session_context") or summarize_personalization_context(
+        session_stats,
+        fallback_level=level,
+        current_topic=previous_topic,
+    )
 
     session_summary = (
         f"Turns: {session_stats.get('turns', 0)}, "
@@ -37,6 +45,7 @@ async def topic_node(state: EnglishTutorState, config: RunnableConfig) -> dict:
             previous_topic=previous_topic,
             session_summary=session_summary,
             memory_prompt=memory_prompt,
+            session_context=session_context,
         )
         suggestion: TopicSuggestion = await topic_llm.ainvoke([
             SystemMessage(content="You are a creative English conversation topic planner."),

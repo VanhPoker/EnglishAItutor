@@ -1,6 +1,6 @@
 """Pydantic + TypedDict models for English Tutor agent state."""
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
@@ -17,14 +17,19 @@ class EnglishTutorState(TypedDict):
 
     # User context
     user_id: str
-    user_level: str  # CEFR: A1, A2, B1, B2, C1, C2
+    user_level: str  # Signup / profile CEFR: A1, A2, B1, B2, C1, C2
+    working_level: str  # Adaptive per-session level used for response difficulty
     current_topic: str
     mem0_user_id: str
+    memory_prompt: str
+    session_context: str
 
     # Analysis results (set by assess node)
     errors_detected: list[dict]  # [{"type": "grammar", "text": "...", "correction": "..."}]
     should_correct: bool  # routing flag
     route: str  # "respond" | "correct" | "topic_change"
+    overall_quality: str
+    suggested_level: str
 
     # Session tracking
     session_stats: dict  # {"turns": 0, "errors": 0, "corrections": 0, ...}
