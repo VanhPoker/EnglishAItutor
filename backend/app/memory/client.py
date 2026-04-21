@@ -1,5 +1,5 @@
 """
-mem0 memory client for English Tutor — stores learner profiles and error patterns.
+mem0 memory client for English Tutor - stores learner profiles and error patterns.
 Adapted from callflow/memory_client/client.py
 """
 
@@ -92,14 +92,7 @@ class MemoryManager:
         """Search memories and return formatted prompt string."""
         try:
             results = await self.client.search(query, user_id=user_id)
-            memories = results.get("results", [])
-
-            if not memories:
-                return "No previous memories about this learner."
-
-            sorted_memories = sorted(memories, key=lambda x: x.get("score", 0))[:limit]
-            lines = [f"- {m.get('memory', '')}" for m in sorted_memories]
-            return "\n".join(lines)
+            return format_memory_search_results(results, limit=limit)
         except Exception as e:
             logger.warning(f"Memory search failed: {e}")
             return "Memory unavailable."
@@ -111,3 +104,23 @@ class MemoryManager:
             logger.info(f"Memory saved for user {user_id}")
         except Exception as e:
             logger.warning(f"Memory save failed for user {user_id}: {e}")
+
+
+def format_memory_search_results(
+    results: dict | None,
+    *,
+    limit: int = 5,
+    fallback: str = "No previous memories about this learner.",
+) -> str:
+    """Format mem0 search results for prompt injection."""
+    memories = (results or {}).get("results", [])
+    if not memories:
+        return fallback
+
+    sorted_memories = sorted(
+        memories,
+        key=lambda item: item.get("score", 0),
+        reverse=True,
+    )[:limit]
+    lines = [f"- {item.get('memory', '').strip()}" for item in sorted_memories if item.get("memory")]
+    return "\n".join(lines) if lines else fallback

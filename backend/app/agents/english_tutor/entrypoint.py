@@ -23,13 +23,18 @@ from livekit.plugins import silero
 
 from app.agents.english_tutor.edge_tts_plugin import EdgeTTS
 from app.agents.english_tutor.graph import create_english_tutor_graph
+from app.agents.english_tutor.session_metrics import (
+    build_stats_payload,
+    compute_session_scores,
+    recommended_profile_level,
+)
 from app.agents.english_tutor.whisper_stt import WhisperSTT
 from app.core.langgraph_adapter import LangGraphAdapter
-from app.core.settings import settings
 from app.database.session_repo import (
     create_practice_session,
     end_practice_session,
     log_error,
+    update_user_cefr_level,
 )
 from app.memory.client import MemoryManager, initialize_memory_client
 
@@ -133,9 +138,6 @@ async def entrypoint(ctx: JobContext):
             level=level,
         )
 
-    # Track stats during session
-    session_stats = {"turns": 0, "errors": 0, "corrections": 0}
-
     # ── Generate greeting ────────────────────────────────────────
     topic_display = topic.replace("_", " ")
     greeting = (
@@ -170,7 +172,6 @@ async def entrypoint(ctx: JobContext):
         try:
             text = await reader.read_all()
             logger.info(f"Text from {participant_identity}: {text}")
-            session_stats["turns"] += 1
 
             chat_ctx = session._chat_ctx.copy()
             chat_ctx.add_message(role="user", content=text, interrupted=True)
@@ -185,27 +186,6 @@ async def entrypoint(ctx: JobContext):
             response_text = "".join(response_parts).strip()
             if response_text:
                 await session.say(response_text, allow_interruptions=False)
-
-            # After response, persist any errors detected by assess node
-            if db_session_id:
-                try:
-                    state = await graph.aget_state(graph_config)
-                    errors = (state.values or {}).get("errors_detected", []) if state else []
-                    for err in errors:
-                        session_stats["errors"] += 1
-                        await log_error(
-                            session_id=db_session_id,
-                            user_id=user_id,
-                            error_type=err.get("error_type", "grammar"),
-                            original_text=err.get("original", ""),
-                            corrected_text=err.get("correction", ""),
-                            explanation=err.get("explanation"),
-                        )
-                    route = (state.values or {}).get("route") if state else None
-                    if route == "correct":
-                        session_stats["corrections"] += 1
-                except Exception as e:
-                    logger.warning(f"Failed to persist errors: {e}")
         except Exception as e:
             logger.error(f"Error handling text stream: {e}", exc_info=True)
 
@@ -240,23 +220,45 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Session ended. Duration: {duration:.1f}min, Usage: {summary}")
 
         if db_session_id:
-            # Compute simple quality scores: fewer errors per turn = higher
-            turns = max(session_stats["turns"], 1)
-            error_rate = session_stats["errors"] / turns
-            grammar_score = max(0, min(100, int(100 - error_rate * 30)))
-            vocabulary_score = max(0, min(100, int(95 - error_rate * 25)))
-            fluency_score = max(0, min(100, int(90 - error_rate * 20)))
+            state_values = {}
+            try:
+                state = await graph.aget_state(graph_config)
+                state_values = state.values or {}
+            except Exception as exc:
+                logger.warning(f"Failed to load final graph state: {exc}")
+
+            session_stats = state_values.get("session_stats") or {}
+            scorecard = compute_session_scores(session_stats, level)
+            stats_payload = build_stats_payload(session_stats, level)
+
+            error_patterns = (session_stats.get("error_patterns") or {}).values()
+            for item in error_patterns:
+                repeat_count = max(1, int(item.get("count") or 1))
+                for _ in range(repeat_count):
+                    await log_error(
+                        session_id=db_session_id,
+                        user_id=user_id,
+                        error_type=item.get("error_type", "grammar"),
+                        original_text=item.get("original", ""),
+                        corrected_text=item.get("correction", ""),
+                        explanation=item.get("explanation"),
+                    )
 
             await end_practice_session(
                 session_id=db_session_id,
-                total_turns=session_stats["turns"],
-                total_errors=session_stats["errors"],
-                corrections_given=session_stats["corrections"],
+                total_turns=int(session_stats.get("turns") or 0),
+                total_errors=int(session_stats.get("total_errors") or 0),
+                corrections_given=int(session_stats.get("corrections") or 0),
                 duration_minutes=round(duration, 2),
-                grammar_score=grammar_score,
-                vocabulary_score=vocabulary_score,
-                fluency_score=fluency_score,
+                grammar_score=scorecard["grammar_score"],
+                vocabulary_score=scorecard["vocabulary_score"],
+                fluency_score=scorecard["fluency_score"],
+                stats_json=stats_payload,
             )
+
+            recommended_level = recommended_profile_level(session_stats, level)
+            if recommended_level and user_id != "anonymous":
+                await update_user_cefr_level(user_id, recommended_level)
 
     ctx.add_shutdown_callback(cleanup)
 

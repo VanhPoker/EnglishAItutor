@@ -66,6 +66,12 @@ class LangGraphStream(llm.LLMStream):
                             self._event_ch.send_nowait(self._create_livekit_chunk(FlushSentinel()))
         except GraphInterrupt:
             pass
+        except Exception as e:
+            logger.error(f"LangGraph stream failed: {e}")
+            if chunk := await self._to_livekit_chunk(
+                "I'm having trouble right now, but let's try one more time."
+            ):
+                self._event_ch.send_nowait(chunk)
 
         if interrupt := await self._get_interrupt():
             if chunk := await self._to_livekit_chunk(interrupt.value):

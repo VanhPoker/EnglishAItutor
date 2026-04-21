@@ -2,12 +2,10 @@
 LangGraph state machine for the English Tutor agent.
 
 Flow:
-  User Input → assess → [route] → respond / correct / topic_change → save_memory → Output
+  User Input -> assess -> prepare_context -> [route] -> respond / correct / topic_change -> save_memory -> Output
 """
 
 import asyncio
-from datetime import date
-from typing import Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -17,11 +15,10 @@ from loguru import logger
 
 from app.agents.english_tutor.models import EnglishTutorState
 from app.agents.english_tutor.nodes.assess import assess_node
+from app.agents.english_tutor.nodes.context import prepare_context_node
 from app.agents.english_tutor.nodes.correct import correct_node
 from app.agents.english_tutor.nodes.respond import respond_node
 from app.agents.english_tutor.nodes.topic import topic_node
-from app.agents.english_tutor.prompts import MEMORY_EXTRACT_PROMPT, MEMORY_UPDATE_PROMPT
-from app.core.settings import settings
 from app.database.connection import get_connection_pool
 
 
@@ -32,8 +29,9 @@ async def save_memory_node(state: EnglishTutorState, config: RunnableConfig) -> 
     Save conversation insights to mem0 for long-term memory.
     Runs asynchronously — doesn't block the response.
     """
-    memory_client = config.get("metadata", {}).get("memory_client")
-    mem0_user_id = state.get("mem0_user_id", state.get("user_id", "anonymous"))
+    metadata = config.get("metadata", {})
+    memory_client = metadata.get("memory_client")
+    mem0_user_id = state.get("mem0_user_id", state.get("user_id") or metadata.get("user_id", "anonymous"))
 
     if not memory_client:
         return {}
@@ -81,12 +79,13 @@ async def create_english_tutor_graph(use_checkpointer: bool = True):
     Build and compile the English Tutor LangGraph.
 
     Graph:
-        assess → {respond, correct, topic} → save_memory → END
+        assess -> prepare_context -> {respond, correct, topic} -> save_memory -> END
     """
     builder = StateGraph(EnglishTutorState)
 
     # Add nodes
     builder.add_node("assess", assess_node)
+    builder.add_node("prepare_context", prepare_context_node)
     builder.add_node("respond", respond_node)
     builder.add_node("correct", correct_node)
     builder.add_node("topic", topic_node)
@@ -97,7 +96,7 @@ async def create_english_tutor_graph(use_checkpointer: bool = True):
 
     # Conditional routing after assessment
     builder.add_conditional_edges(
-        "assess",
+        "prepare_context",
         route_after_assess,
         {
             "respond": "respond",
@@ -105,6 +104,7 @@ async def create_english_tutor_graph(use_checkpointer: bool = True):
             "topic": "topic",
         },
     )
+    builder.add_edge("assess", "prepare_context")
 
     # All response nodes → save memory → end
     builder.add_edge("respond", "save_memory")
