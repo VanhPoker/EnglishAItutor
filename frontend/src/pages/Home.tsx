@@ -1,63 +1,52 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  MessageSquare,
-  Mic,
-  Brain,
-  TrendingUp,
-  BookOpen,
-  Sparkles,
   ArrowRight,
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  ClipboardList,
+  MessageSquare,
   Shield,
-  ListChecks,
+  Target,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
-import { claimAdminAccess, getAdminBootstrapStatus } from "../lib/api";
+import Badge from "../components/ui/Badge";
+import {
+  claimAdminAccess,
+  getAdminBootstrapStatus,
+  getDashboard,
+  type DashboardStats,
+} from "../lib/api";
 import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
-const features = [
-  {
-    icon: Mic,
-    title: "Voice Conversation",
-    desc: "Practice speaking English in real-time with AI voice chat",
-    color: "text-blue-500 bg-blue-50",
-  },
-  {
-    icon: MessageSquare,
-    title: "Text Chat",
-    desc: "Type messages and get instant feedback on your English",
-    color: "text-purple-500 bg-purple-50",
-  },
-  {
-    icon: Brain,
-    title: "Smart Memory",
-    desc: "Your tutor remembers your mistakes and tracks your progress",
-    color: "text-amber-500 bg-amber-50",
-  },
-  {
-    icon: TrendingUp,
-    title: "Adaptive Learning",
-    desc: "Difficulty adjusts to your CEFR level automatically",
-    color: "text-green-500 bg-green-50",
-  },
-];
-
 const topics = [
-  { name: "Free Conversation", value: "free_conversation", emoji: "💬" },
-  { name: "Daily Life", value: "daily_life", emoji: "🏠" },
-  { name: "Travel", value: "travel", emoji: "✈️" },
-  { name: "Work & Career", value: "work_career", emoji: "💼" },
-  { name: "Food & Cooking", value: "food_cooking", emoji: "🍳" },
-  { name: "Movies & Books", value: "movies_books", emoji: "🎬" },
-  { name: "Technology", value: "technology", emoji: "💻" },
-  { name: "Health & Fitness", value: "health_fitness", emoji: "🏃" },
+  { name: "Free Conversation", value: "free_conversation", hint: "Open speaking" },
+  { name: "Daily Life", value: "daily_life", hint: "Routine phrases" },
+  { name: "Travel", value: "travel", hint: "Trips and plans" },
+  { name: "Work & Career", value: "work_career", hint: "Meetings and jobs" },
+  { name: "Food & Cooking", value: "food_cooking", hint: "Ordering and recipes" },
+  { name: "Movies & Books", value: "movies_books", hint: "Opinions and stories" },
+  { name: "Technology", value: "technology", hint: "Products and tools" },
+  { name: "Health & Fitness", value: "health_fitness", hint: "Habits and advice" },
 ];
 
-const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const levels = [
+  { value: "A1", label: "A1", hint: "Simple phrases" },
+  { value: "A2", label: "A2", hint: "Everyday tasks" },
+  { value: "B1", label: "B1", hint: "Common situations" },
+  { value: "B2", label: "B2", hint: "Fluent discussion" },
+  { value: "C1", label: "C1", hint: "Precise expression" },
+  { value: "C2", label: "C2", hint: "Near native" },
+];
+
+function formatTopic(value: string) {
+  return value.replace(/_/g, " ");
+}
 
 export default function Home() {
   const navigate = useNavigate();
@@ -66,6 +55,7 @@ export default function Home() {
   const { level, topic, setLevel, setTopic } = useUserStore();
   const [canClaimAdmin, setCanClaimAdmin] = useState(false);
   const [claimingAdmin, setClaimingAdmin] = useState(false);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
 
   useEffect(() => {
     if (authUser?.role === "admin") {
@@ -78,13 +68,18 @@ export default function Home() {
       .catch(() => setCanClaimAdmin(false));
   }, [authUser?.role]);
 
-  const handleStart = () => {
-    navigate("/practice");
-  };
+  useEffect(() => {
+    getDashboard()
+      .then(setStats)
+      .catch(() => setStats(null));
+  }, []);
 
-  const handleQuiz = () => {
-    navigate("/quizzes");
-  };
+  const currentTopic = useMemo(() => {
+    return topics.find((item) => item.value === topic) || topics[0];
+  }, [topic]);
+
+  const recentSession = stats?.recent_sessions?.[0];
+  const weakArea = stats?.common_errors?.[0]?.type;
 
   const handleClaimAdmin = async () => {
     setClaimingAdmin(true);
@@ -99,150 +94,205 @@ export default function Home() {
 
   return (
     <Layout>
-      <div className="max-w-5xl mx-auto px-4 py-8">
-        {/* Hero */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-12"
-        >
-          <div className="inline-flex items-center gap-2 bg-primary-50 text-primary-600 px-4 py-1.5 rounded-full text-sm font-medium mb-4">
-            <Sparkles className="w-4 h-4" />
-            AI-Powered English Tutor
+      <div className="page-shell">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-blue-700">Workspace</p>
+              <h1 className="mt-1 text-3xl font-bold text-gray-900">Today&apos;s learning plan</h1>
+              <p className="mt-2 max-w-2xl text-sm text-gray-600">
+                Start with a conversation, review captured mistakes, then turn weak points into a short quiz.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="info" size="md">{level}</Badge>
+              <Badge size="md">{formatTopic(currentTopic.value)}</Badge>
+            </div>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            Master English Through
-            <span className="text-primary-600"> Conversation</span>
-          </h1>
-          <p className="text-lg text-gray-500 max-w-2xl mx-auto">
-            Practice speaking and writing English with an AI tutor that adapts to your level,
-            corrects your mistakes naturally, and remembers your progress.
-          </p>
         </motion.div>
 
         {canClaimAdmin && (
-          <Card className="mb-8">
+          <Card className="mb-6 border-green-200 bg-green-50">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-lg bg-green-50 text-green-600 flex items-center justify-center">
-                  <Shield className="w-5 h-5" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-green-700 ring-1 ring-green-200">
+                  <Shield className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Admin access is still unclaimed</h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Claim admin once, then manage users, levels, and roles from the admin area.
+                  <h2 className="font-semibold text-gray-900">Admin access is unclaimed</h2>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Claim once to manage users and roles from the admin area.
                   </p>
                 </div>
               </div>
 
-              <Button
-                type="button"
-                onClick={() => void handleClaimAdmin()}
-                loading={claimingAdmin}
-              >
+              <Button type="button" onClick={() => void handleClaimAdmin()} loading={claimingAdmin}>
                 Claim Admin
               </Button>
             </div>
           </Card>
         )}
 
-        {/* Features grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-          {features.map((f, i) => (
-            <motion.div
-              key={f.title}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-            >
-              <Card className="text-center h-full">
-                <div className={`w-10 h-10 mx-auto rounded-xl flex items-center justify-center mb-3 ${f.color}`}>
-                  <f.icon className="w-5 h-5" />
+        <div className="grid gap-6 lg:grid-cols-[1.35fr_0.65fr]">
+          <Card>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Next actions</h2>
+                <p className="mt-1 text-sm text-gray-500">Use the loop that makes the product different from plain chat.</p>
+              </div>
+              <Badge variant="success">Learning loop</Badge>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {[
+                {
+                  title: "Speak with tutor",
+                  body: `${level} practice about ${formatTopic(topic)}.`,
+                  icon: MessageSquare,
+                  action: "Start practice",
+                  to: "/practice",
+                  tone: "bg-blue-50 text-blue-700 ring-blue-100",
+                },
+                {
+                  title: "Review mistakes",
+                  body: recentSession ? "Open feedback from the last completed session." : "Finish one session to unlock review.",
+                  icon: Target,
+                  action: "Open review",
+                  to: "/review",
+                  tone: "bg-green-50 text-green-700 ring-green-100",
+                },
+                {
+                  title: "Take a quiz",
+                  body: weakArea ? `Focus on ${weakArea.replace(/_/g, " ")} mistakes.` : "Generate questions from a topic or mistakes.",
+                  icon: ClipboardList,
+                  action: "Open quizzes",
+                  to: "/quizzes",
+                  tone: "bg-amber-50 text-amber-700 ring-amber-100",
+                },
+              ].map((item) => (
+                <Link
+                  key={item.title}
+                  to={item.to}
+                  className="group rounded-lg border border-gray-200 bg-white p-4 transition hover:border-gray-300 hover:shadow-sm"
+                >
+                  <div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-lg ring-1 ${item.tone}`}>
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <h3 className="font-semibold text-gray-900">{item.title}</h3>
+                  <p className="mt-2 min-h-10 text-sm text-gray-500">{item.body}</p>
+                  <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-700">
+                    {item.action}
+                    <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
+                <BarChart3 className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-900">Progress snapshot</h2>
+                <p className="text-xs text-gray-500">Conversation data so far</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-lg bg-gray-50 p-3">
+                <p className="text-xl font-bold text-gray-900">{stats?.total_sessions ?? 0}</p>
+                <p className="text-xs text-gray-500">Sessions</p>
+              </div>
+              <div className="rounded-lg bg-gray-50 p-3">
+                <p className="text-xl font-bold text-gray-900">{Math.round(stats?.total_minutes ?? 0)}</p>
+                <p className="text-xs text-gray-500">Minutes</p>
+              </div>
+              <div className="rounded-lg bg-gray-50 p-3">
+                <p className="text-xl font-bold text-gray-900">{stats?.streak_days ?? 0}</p>
+                <p className="text-xs text-gray-500">Streak</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-lg border border-gray-200 p-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {weakArea ? `Work on ${weakArea.replace(/_/g, " ")}` : "Start a measured session"}
+                  </p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {weakArea
+                      ? "Create a quiz from recent mistakes after speaking."
+                      : "One conversation gives the app enough data for review and quiz practice."}
+                  </p>
                 </div>
-                <h3 className="text-sm font-semibold text-gray-800">{f.title}</h3>
-                <p className="text-xs text-gray-500 mt-1">{f.desc}</p>
-              </Card>
-            </motion.div>
-          ))}
+              </div>
+            </div>
+          </Card>
         </div>
 
-        {/* Setup Section */}
-        <Card className="mb-8">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-primary-500" />
-            Set Up Your Session
-          </h2>
+        <div className="mt-6 grid gap-6 lg:grid-cols-[0.7fr_1.3fr]">
+          <Card>
+            <div className="flex items-center gap-3">
+              <BookOpen className="h-5 w-5 text-blue-700" />
+              <div>
+                <h2 className="font-semibold text-gray-900">Level</h2>
+                <p className="text-sm text-gray-500">Used by tutor and quiz generation</p>
+              </div>
+            </div>
 
-          {/* Level selector */}
-          <div className="mb-6">
-            <label className="text-sm font-medium text-gray-600 mb-2 block">
-              Your English Level (CEFR)
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {levels.map((l) => (
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              {levels.map((item) => (
                 <button
-                  key={l}
-                  onClick={() => setLevel(l)}
-                  className={`
-                    px-4 py-2 rounded-lg text-sm font-medium transition-all
-                    ${
-                      level === l
-                        ? "bg-primary-600 text-white shadow-md"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }
-                  `}
+                  key={item.value}
+                  type="button"
+                  onClick={() => setLevel(item.value)}
+                  className={`rounded-lg border p-3 text-left transition ${
+                    level === item.value
+                      ? "border-blue-300 bg-blue-50 text-blue-800"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
                 >
-                  {l}
+                  <span className="block text-sm font-bold">{item.label}</span>
+                  <span className="mt-1 block text-xs text-gray-500">{item.hint}</span>
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1">
-              {level === "A1" && "Beginner — simple phrases and everyday expressions"}
-              {level === "A2" && "Elementary — frequently used expressions, basic communication"}
-              {level === "B1" && "Intermediate — can deal with most situations while travelling"}
-              {level === "B2" && "Upper Intermediate — can interact with fluency and spontaneity"}
-              {level === "C1" && "Advanced — can express ideas fluently and spontaneously"}
-              {level === "C2" && "Proficiency — can understand virtually everything heard or read"}
-            </p>
-          </div>
+          </Card>
 
-          {/* Topic selector */}
-          <div className="mb-6">
-            <label className="text-sm font-medium text-gray-600 mb-2 block">
-              Conversation Topic
-            </label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {topics.map((t) => (
+          <Card>
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h2 className="font-semibold text-gray-900">Conversation topic</h2>
+                <p className="mt-1 text-sm text-gray-500">Pick a focused context before entering the tutor room.</p>
+              </div>
+              <Link to="/practice" className="btn-primary inline-flex items-center justify-center gap-2">
+                Start practice
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {topics.map((item) => (
                 <button
-                  key={t.value}
-                  onClick={() => setTopic(t.value)}
-                  className={`
-                    flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm transition-all text-left
-                    ${
-                      topic === t.value
-                        ? "bg-primary-50 border-2 border-primary-400 text-primary-700 font-medium"
-                        : "bg-gray-50 border-2 border-transparent text-gray-600 hover:bg-gray-100"
-                    }
-                  `}
+                  key={item.value}
+                  type="button"
+                  onClick={() => setTopic(item.value)}
+                  className={`min-h-20 rounded-lg border p-3 text-left transition ${
+                    topic === item.value
+                      ? "border-blue-300 bg-blue-50 text-blue-800"
+                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
                 >
-                  <span>{t.emoji}</span>
-                  <span>{t.name}</span>
+                  <span className="block text-sm font-semibold">{item.name}</span>
+                  <span className="mt-1 block text-xs text-gray-500">{item.hint}</span>
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-3">
-            <button onClick={handleStart} className="btn-primary w-full flex items-center justify-center gap-2">
-              Start Practicing
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button onClick={handleQuiz} className="btn-secondary w-full flex items-center justify-center gap-2">
-              Create Quiz
-              <ListChecks className="w-4 h-4" />
-            </button>
-          </div>
-        </Card>
+          </Card>
+        </div>
       </div>
     </Layout>
   );
