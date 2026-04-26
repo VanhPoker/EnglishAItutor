@@ -261,6 +261,125 @@ export async function getDashboard(): Promise<DashboardStats> {
   return apiFetch<DashboardStats>(`${API_BASE}/dashboard`);
 }
 
+// ── Quiz API ────────────────────────────────────────────────────
+
+export type QuizQuestionType = "multiple_choice" | "fill_blank";
+
+export interface QuizQuestion {
+  id: string;
+  type: QuizQuestionType;
+  prompt: string;
+  options: string[];
+  explanation: string;
+  focus: string;
+}
+
+export interface QuizResponse {
+  id: string;
+  title: string;
+  topic: string;
+  level: string;
+  source: string;
+  description: string | null;
+  question_count: number;
+  questions: QuizQuestion[];
+  created_at: string;
+}
+
+export interface QuizListItem {
+  id: string;
+  title: string;
+  topic: string;
+  level: string;
+  source: string;
+  question_count: number;
+  created_at: string;
+  latest_score: number | null;
+}
+
+export interface QuizGenerateRequest {
+  title?: string;
+  topic: string;
+  level: string;
+  question_count: number;
+  source: "topic" | "mistakes";
+  focus?: string;
+}
+
+export interface QuizCreateRequest {
+  title: string;
+  topic: string;
+  level: string;
+  source: "manual";
+  description?: string;
+  questions: Array<QuizQuestion & { correct_answer: string }>;
+}
+
+export interface QuestionResult {
+  question_id: string;
+  prompt: string;
+  focus: string;
+  user_answer: string;
+  correct_answer: string;
+  is_correct: boolean;
+  explanation: string;
+}
+
+export interface QuizReview {
+  summary: string;
+  strengths: string[];
+  improvement_areas: string[];
+  next_steps: string[];
+}
+
+export interface QuizAttemptResponse {
+  id: string;
+  quiz_id: string;
+  quiz_title: string;
+  score: number;
+  correct_count: number;
+  total_questions: number;
+  results: QuestionResult[];
+  ai_review: QuizReview;
+  created_at: string;
+}
+
+export async function getQuizzes(): Promise<QuizListItem[]> {
+  return apiFetch<QuizListItem[]>(`${API_BASE}/quizzes`);
+}
+
+export async function getQuiz(quizId: string): Promise<QuizResponse> {
+  return apiFetch<QuizResponse>(`${API_BASE}/quizzes/${quizId}`);
+}
+
+export async function createQuiz(data: QuizCreateRequest): Promise<QuizResponse> {
+  return apiFetch<QuizResponse>(`${API_BASE}/quizzes`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function generateQuiz(data: QuizGenerateRequest): Promise<QuizResponse> {
+  return apiFetch<QuizResponse>(`${API_BASE}/quizzes/generate`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function submitQuiz(
+  quizId: string,
+  answers: Record<string, string>
+): Promise<QuizAttemptResponse> {
+  return apiFetch<QuizAttemptResponse>(`${API_BASE}/quizzes/${quizId}/submit`, {
+    method: "POST",
+    body: JSON.stringify({ answers }),
+  });
+}
+
+export async function getQuizAttempt(attemptId: string): Promise<QuizAttemptResponse> {
+  return apiFetch<QuizAttemptResponse>(`${API_BASE}/quizzes/attempts/${attemptId}`);
+}
+
 // ── Admin API ───────────────────────────────────────────────────
 
 export interface AdminUser {

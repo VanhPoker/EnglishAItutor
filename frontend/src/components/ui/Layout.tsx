@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { BookOpen, Home, BarChart3, LogOut, Target, Users } from "lucide-react";
+import { BookOpen, Home, BarChart3, LogOut, Target, Users, ListChecks } from "lucide-react";
 import type { ReactNode } from "react";
 import { logoutRequest } from "../../lib/api";
 import { useAuthStore } from "../../stores/authStore";
@@ -16,6 +16,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: "/", label: "Home", icon: Home },
     { path: "/practice", label: "Practice", icon: BookOpen },
     { path: "/review", label: "Review", icon: Target },
+    { path: "/quizzes", label: "Quizzes", icon: ListChecks },
     { path: "/dashboard", label: "Dashboard", icon: BarChart3 },
     ...(user?.role === "admin" ? [{ path: "/admin/users", label: "Users", icon: Users }] : []),
   ];
