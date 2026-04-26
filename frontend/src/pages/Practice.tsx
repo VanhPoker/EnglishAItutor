@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import ChatRoom from "../components/chat/ChatRoom";
 import { useUserStore } from "../stores/userStore";
 import Badge from "../components/ui/Badge";
+import { topicLabel } from "../lib/labels";
 
 export default function Practice() {
   const { level, topic } = useUserStore();
@@ -21,17 +22,17 @@ export default function Practice() {
               <ArrowLeft className="w-4 h-4 text-gray-500" />
             </Link>
             <div>
-              <h1 className="text-sm font-semibold text-gray-800">English Practice</h1>
+              <h1 className="text-sm font-semibold text-gray-800">Luyện nói tiếng Anh</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <Badge variant="info" size="sm">{level}</Badge>
-                <Badge size="sm">{topic.replace(/_/g, " ")}</Badge>
+                <Badge size="sm">{topicLabel(topic)}</Badge>
               </div>
             </div>
           </div>
           <Link
             to="/"
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Change settings"
+            title="Đổi thiết lập"
           >
             <Settings className="w-4 h-4 text-gray-400" />
           </Link>

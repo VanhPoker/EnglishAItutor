@@ -18,7 +18,7 @@ function parseErrorMessage(body: any, fallback: string): string {
     if (typeof first?.msg === "string") return first.msg;
     return String(first);
   }
-  return fallback || "Request failed";
+  return fallback || "Yêu cầu thất bại";
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {

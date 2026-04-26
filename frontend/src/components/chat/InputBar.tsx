@@ -10,7 +10,7 @@ interface InputBarProps {
 export default function InputBar({
   onSend,
   disabled = false,
-  placeholder = "Type your message in English...",
+  placeholder = "Nhập câu tiếng Anh của bạn...",
 }: InputBarProps) {
   const [text, setText] = useState("");
   const [isSending, setIsSending] = useState(false);

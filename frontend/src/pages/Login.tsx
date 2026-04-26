@@ -26,11 +26,11 @@ export default function Login() {
 
     if (isRegister) {
       if (password !== confirmPassword) {
-        setError("Passwords do not match.");
+        setError("Mật khẩu xác nhận không khớp.");
         return;
       }
       if (password.length < 8) {
-        setError("Password must be at least 8 characters.");
+        setError("Mật khẩu cần tối thiểu 8 ký tự.");
         return;
       }
     }
@@ -51,7 +51,7 @@ export default function Login() {
       setSession(res.token, res.user);
       navigate("/");
     } catch (err: any) {
-      setError(err.message || "Something went wrong");
+      setError(err.message || "Có lỗi xảy ra, vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -61,9 +61,9 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">English AI Tutor</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Gia sư AI tiếng Anh</h1>
           <p className="text-gray-500 mt-2">
-            {isRegister ? "Create your account" : "Welcome back"}
+            {isRegister ? "Tạo tài khoản học viên" : "Chào mừng quay lại"}
           </p>
         </div>
 
@@ -73,13 +73,13 @@ export default function Login() {
         >
           {isRegister && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Họ tên</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="field"
-                placeholder="Your name"
+                placeholder="Tên của bạn"
               />
             </div>
           )}
@@ -98,20 +98,20 @@ export default function Login() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu</label>
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="field"
-              placeholder="Password"
+              placeholder="Mật khẩu"
               minLength={8}
               autoComplete={isRegister ? "new-password" : "current-password"}
             />
             {isRegister && (
               <p className="text-xs text-gray-500 mt-1">
-                Use 8+ characters with uppercase, lowercase, a number, and a special character.
+                Dùng ít nhất 8 ký tự, gồm chữ hoa, chữ thường, số và ký tự đặc biệt.
               </p>
             )}
           </div>
@@ -119,14 +119,14 @@ export default function Login() {
           {isRegister && (
             <>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Xác nhận mật khẩu</label>
                 <input
                   type="password"
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   className="field"
-                  placeholder="Repeat your password"
+                  placeholder="Nhập lại mật khẩu"
                   minLength={8}
                   autoComplete="new-password"
                 />
@@ -134,7 +134,7 @@ export default function Login() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Native Language</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ngôn ngữ mẹ đẻ</label>
                   <input
                     type="text"
                     value={nativeLanguage}
@@ -145,7 +145,7 @@ export default function Login() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">CEFR Level</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Trình độ CEFR</label>
                   <select
                     value={cefrLevel}
                     onChange={(e) => setCefrLevel(e.target.value)}
@@ -174,11 +174,11 @@ export default function Login() {
             className="btn-primary flex w-full items-center justify-center gap-2"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            <span>{loading ? "Working..." : isRegister ? "Create Account" : "Sign In"}</span>
+            <span>{loading ? "Đang xử lý..." : isRegister ? "Tạo tài khoản" : "Đăng nhập"}</span>
           </button>
 
           <p className="text-center text-sm text-gray-500">
-            {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
+            {isRegister ? "Đã có tài khoản?" : "Chưa có tài khoản?"}{" "}
             <button
               type="button"
               onClick={() => {
@@ -189,7 +189,7 @@ export default function Login() {
               }}
               className="font-medium text-blue-700 hover:underline"
             >
-              {isRegister ? "Sign In" : "Create one"}
+              {isRegister ? "Đăng nhập" : "Tạo tài khoản"}
             </button>
           </p>
         </form>

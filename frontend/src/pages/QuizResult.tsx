@@ -14,31 +14,28 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import { getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
+import { focusLabel } from "../lib/labels";
 
 function scoreTone(score: number) {
   if (score >= 80) {
     return {
-      label: "Strong",
+      label: "Tốt",
       className: "border-green-200 bg-green-50 text-green-700",
       badge: "success" as const,
     };
   }
   if (score >= 60) {
     return {
-      label: "Developing",
+      label: "Đang tiến bộ",
       className: "border-amber-200 bg-amber-50 text-amber-700",
       badge: "warning" as const,
     };
   }
   return {
-    label: "Needs review",
+    label: "Cần ôn lại",
     className: "border-red-200 bg-red-50 text-red-700",
     badge: "error" as const,
   };
-}
-
-function formatFocus(value: string) {
-  return value.replace(/_/g, " ");
 }
 
 export default function QuizResult() {
@@ -51,7 +48,7 @@ export default function QuizResult() {
     if (!attemptId) return;
     getQuizAttempt(attemptId)
       .then(setAttempt)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load result"))
+      .catch((err) => setError(err instanceof Error ? err.message : "Không tải được kết quả"))
       .finally(() => setLoading(false));
   }, [attemptId]);
 
@@ -71,7 +68,7 @@ export default function QuizResult() {
         <div className="flex min-h-[60vh] items-center justify-center">
           <div className="flex items-center gap-3 text-sm text-gray-500">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading result...
+            Đang tải kết quả...
           </div>
         </div>
       </Layout>
@@ -83,10 +80,10 @@ export default function QuizResult() {
       <Layout>
         <div className="mx-auto max-w-3xl px-4 py-10">
           <Card>
-            <h1 className="text-lg font-semibold text-gray-900">Result unavailable</h1>
-            <p className="mt-1 text-sm text-gray-500">{error || "This result could not be loaded."}</p>
+            <h1 className="text-lg font-semibold text-gray-900">Không mở được kết quả</h1>
+            <p className="mt-1 text-sm text-gray-500">{error || "Kết quả này chưa tải được."}</p>
             <Link to="/quizzes" className="btn-primary mt-5 inline-flex items-center gap-2">
-              Back to quizzes
+              Quay lại quiz
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Card>
@@ -102,19 +99,19 @@ export default function QuizResult() {
       <div className="page-shell">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm font-semibold text-blue-700">Quiz result</p>
+            <p className="text-sm font-semibold text-blue-700">Kết quả quiz</p>
             <h1 className="mt-1 text-3xl font-bold text-gray-900">{attempt.quiz_title}</h1>
             <p className="mt-2 text-sm text-gray-600">
-              Review the wrong answers, then retry or generate a tighter follow-up quiz.
+              Xem lại câu sai, sau đó làm lại hoặc tạo bài luyện sát hơn.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link to={`/quizzes/${attempt.quiz_id}`} className="btn-primary inline-flex items-center gap-2">
               <RefreshCw className="h-4 w-4" />
-              Retry
+              Làm lại
             </Link>
             <Link to="/quizzes" className="btn-secondary inline-flex items-center gap-2">
-              Quiz Studio
+              Tạo quiz
             </Link>
           </div>
         </div>
@@ -126,18 +123,18 @@ export default function QuizResult() {
                 <p className="text-sm font-semibold">{tone.label}</p>
                 <p className="mt-2 text-5xl font-bold">{attempt.score}%</p>
                 <p className="mt-2 text-sm">
-                  {attempt.correct_count}/{attempt.total_questions} correct
+                  Đúng {attempt.correct_count}/{attempt.total_questions}
                 </p>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-3 text-center">
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xl font-bold text-gray-900">{attempt.total_questions}</p>
-                  <p className="text-xs text-gray-500">Questions</p>
+                  <p className="text-xs text-gray-500">Câu hỏi</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xl font-bold text-gray-900">{wrongResults.length}</p>
-                  <p className="text-xs text-gray-500">To review</p>
+                  <p className="text-xs text-gray-500">Cần ôn</p>
                 </div>
               </div>
             </Card>
@@ -146,18 +143,18 @@ export default function QuizResult() {
               <div className="flex items-center gap-3">
                 <Target className="h-5 w-5 text-amber-600" />
                 <div>
-                  <h2 className="font-semibold text-gray-900">Weak areas</h2>
-                  <p className="text-sm text-gray-500">Based on this attempt</p>
+                  <h2 className="font-semibold text-gray-900">Điểm yếu</h2>
+                  <p className="text-sm text-gray-500">Dựa trên lần làm bài này</p>
                 </div>
               </div>
               <div className="mt-4 space-y-2">
                 {focusSummary.length === 0 ? (
-                  <p className="text-sm text-gray-500">No weak area in this quiz.</p>
+                  <p className="text-sm text-gray-500">Chưa có điểm yếu trong bài này.</p>
                 ) : (
                   focusSummary.map(([focus, count]) => (
                     <div key={focus} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
-                      <span className="text-sm font-medium capitalize text-gray-700">{formatFocus(focus)}</span>
-                      <Badge variant="warning">{count} missed</Badge>
+                      <span className="text-sm font-medium text-gray-700">{focusLabel(focus)}</span>
+                      <Badge variant="warning">Sai {count} câu</Badge>
                     </div>
                   ))
                 )}
@@ -172,8 +169,8 @@ export default function QuizResult() {
                   <ClipboardList className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-gray-900">AI Review</h2>
-                  <p className="text-sm text-gray-500">What to improve before the next session</p>
+                  <h2 className="font-semibold text-gray-900">AI nhận xét</h2>
+                  <p className="text-sm text-gray-500">Điểm cần cải thiện trước buổi tiếp theo</p>
                 </div>
               </div>
 
@@ -181,15 +178,15 @@ export default function QuizResult() {
 
               <div className="mt-5 grid gap-4 md:grid-cols-3">
                 {[
-                  { title: "Strengths", items: attempt.ai_review.strengths, tone: "success" },
-                  { title: "Improve", items: attempt.ai_review.improvement_areas, tone: "warning" },
-                  { title: "Next steps", items: attempt.ai_review.next_steps, tone: "info" },
+                  { title: "Điểm mạnh", items: attempt.ai_review.strengths, tone: "success" },
+                  { title: "Cần cải thiện", items: attempt.ai_review.improvement_areas, tone: "warning" },
+                  { title: "Bước tiếp theo", items: attempt.ai_review.next_steps, tone: "info" },
                 ].map((group) => (
                   <div key={group.title} className="rounded-lg border border-gray-200 p-4">
                     <Badge variant={group.tone as "success" | "warning" | "info"}>{group.title}</Badge>
                     <ul className="mt-3 space-y-2">
                       {group.items.length === 0 ? (
-                        <li className="text-sm text-gray-400">No item yet.</li>
+                        <li className="text-sm text-gray-400">Chưa có mục nào.</li>
                       ) : (
                         group.items.map((item) => (
                           <li key={item} className="text-sm leading-5 text-gray-600">
@@ -204,7 +201,7 @@ export default function QuizResult() {
             </Card>
 
             <Card>
-              <h2 className="font-semibold text-gray-900">Answer review</h2>
+              <h2 className="font-semibold text-gray-900">Xem lại đáp án</h2>
               <div className="mt-4 space-y-3">
                 {attempt.results.map((item, index) => (
                   <motion.div
@@ -223,9 +220,9 @@ export default function QuizResult() {
                             <XCircle className="h-4 w-4 text-red-600" />
                           )}
                           <Badge variant={item.is_correct ? "success" : "error"}>
-                            {item.is_correct ? "Correct" : "Needs review"}
+                            {item.is_correct ? "Đúng" : "Cần ôn"}
                           </Badge>
-                          <Badge>{formatFocus(item.focus)}</Badge>
+                          <Badge>{focusLabel(item.focus)}</Badge>
                         </div>
                         <p className="font-medium leading-6 text-gray-900">{item.prompt}</p>
                       </div>
@@ -234,11 +231,11 @@ export default function QuizResult() {
 
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <div className="rounded-lg bg-gray-50 p-3">
-                        <p className="text-xs font-semibold uppercase text-gray-500">Your answer</p>
-                        <p className="mt-1 text-sm text-gray-700">{item.user_answer || "No answer"}</p>
+                        <p className="text-xs font-semibold uppercase text-gray-500">Câu trả lời của bạn</p>
+                        <p className="mt-1 text-sm text-gray-700">{item.user_answer || "Chưa trả lời"}</p>
                       </div>
                       <div className="rounded-lg bg-green-50 p-3">
-                        <p className="text-xs font-semibold uppercase text-green-700">Correct answer</p>
+                        <p className="text-xs font-semibold uppercase text-green-700">Đáp án đúng</p>
                         <p className="mt-1 text-sm text-green-800">{item.correct_answer}</p>
                       </div>
                     </div>

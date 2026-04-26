@@ -19,7 +19,7 @@ function FullScreenLoader() {
     <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="flex items-center gap-3 text-sm text-gray-500">
         <Loader2 className="w-4 h-4 animate-spin" />
-        Restoring your session...
+        Đang khôi phục phiên đăng nhập...
       </div>
     </div>
   );

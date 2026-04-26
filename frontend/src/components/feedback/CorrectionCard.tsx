@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import Badge from "../ui/Badge";
+import { focusLabel } from "../../lib/labels";
 
 interface CorrectionCardProps {
   errorType: string;
@@ -32,7 +33,7 @@ export default function CorrectionCard({
       <div className="flex items-center gap-2">
         <AlertCircle className="w-4 h-4 text-amber-500" />
         <Badge variant={typeColors[errorType] || "warning"}>
-          {errorType}
+          {focusLabel(errorType)}
         </Badge>
       </div>
 

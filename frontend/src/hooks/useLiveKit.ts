@@ -210,7 +210,7 @@ export function useLiveKit() {
           const isLocal =
             participant?.identity === room.localParticipant.identity;
           const role = isLocal ? "user" : "assistant";
-          const label = isLocal ? "You" : "Tutor";
+          const label = isLocal ? "Bạn" : "Gia sư";
 
           if (segment.final) {
             setCurrentTranscript("");

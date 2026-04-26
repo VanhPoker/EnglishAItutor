@@ -23,7 +23,7 @@ export default function VoiceControls({ micEnabled, onToggleMic, isConnected }: 
             className="flex items-center gap-1.5 text-xs text-accent-600"
           >
             <Volume2 className="w-3.5 h-3.5 animate-pulse" />
-            <span>Tutor speaking...</span>
+            <span>Gia sư đang nói...</span>
           </motion.div>
         )}
 
@@ -56,7 +56,7 @@ export default function VoiceControls({ micEnabled, onToggleMic, isConnected }: 
 
         {/* Status label */}
         <span className={`text-xs ${micEnabled ? "text-red-500 font-medium" : "text-gray-400"}`}>
-          {micEnabled ? "Tap to mute" : "Tap to speak"}
+          {micEnabled ? "Bấm để tắt micro" : "Bấm để nói"}
         </span>
       </div>
 

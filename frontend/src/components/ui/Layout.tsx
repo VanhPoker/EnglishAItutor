@@ -18,16 +18,16 @@ interface LayoutProps {
 }
 
 const baseItems = [
-  { path: "/", label: "Workspace", icon: Home, matches: ["/"] },
-  { path: "/practice", label: "Practice", icon: BookOpen, matches: ["/practice"] },
-  { path: "/review", label: "Review", icon: Target, matches: ["/review"] },
+  { path: "/", label: "Học tập", icon: Home, matches: ["/"] },
+  { path: "/practice", label: "Luyện nói", icon: BookOpen, matches: ["/practice"] },
+  { path: "/review", label: "Ôn lỗi", icon: Target, matches: ["/review"] },
   {
     path: "/quizzes",
-    label: "Quizzes",
+    label: "Bài quiz",
     icon: ListChecks,
     matches: ["/quizzes", "/quiz-results"],
   },
-  { path: "/dashboard", label: "Progress", icon: BarChart3, matches: ["/dashboard"] },
+  { path: "/dashboard", label: "Tiến độ", icon: BarChart3, matches: ["/dashboard"] },
 ];
 
 export default function Layout({ children }: LayoutProps) {
@@ -37,7 +37,7 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = [
     ...baseItems,
     ...(user?.role === "admin"
-      ? [{ path: "/admin/users", label: "Users", icon: Users, matches: ["/admin/users"] }]
+      ? [{ path: "/admin/users", label: "Người dùng", icon: Users, matches: ["/admin/users"] }]
       : []),
   ];
 
@@ -82,8 +82,8 @@ export default function Layout({ children }: LayoutProps) {
             <ClipboardCheck className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900">English AI Tutor</p>
-            <p className="text-xs text-gray-500">Practice, review, quiz</p>
+            <p className="text-sm font-bold text-gray-900">Gia sư AI tiếng Anh</p>
+            <p className="text-xs text-gray-500">Luyện nói, ôn lỗi, quiz</p>
           </div>
         </div>
 
@@ -95,7 +95,7 @@ export default function Layout({ children }: LayoutProps) {
               <p className="truncate text-sm font-semibold text-gray-900">{user.name}</p>
               <p className="text-xs text-gray-500">
                 {user.cefr_level}
-                {user.role === "admin" ? " · admin" : ""}
+                {user.role === "admin" ? " · quản trị" : ""}
               </p>
             </div>
             <button
@@ -104,7 +104,7 @@ export default function Layout({ children }: LayoutProps) {
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-red-50 hover:text-red-600"
             >
               <LogOut className="h-4 w-4" />
-              Log out
+              Đăng xuất
             </button>
           </div>
         )}
@@ -117,13 +117,13 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
                 <ClipboardCheck className="h-4 w-4" />
               </div>
-              <span className="text-sm font-bold text-gray-900">English AI Tutor</span>
+              <span className="text-sm font-bold text-gray-900">Gia sư AI tiếng Anh</span>
             </Link>
             <button
               type="button"
               onClick={handleLogout}
               className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-red-600"
-              aria-label="Log out"
+              aria-label="Đăng xuất"
             >
               <LogOut className="h-4 w-4" />
             </button>

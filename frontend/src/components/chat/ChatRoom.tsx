@@ -9,6 +9,7 @@ import MessageList from "./MessageList";
 import InputBar from "./InputBar";
 import VoiceControls from "../voice/VoiceControls";
 import AudioVisualizer from "../voice/AudioVisualizer";
+import { topicLabel } from "../../lib/labels";
 
 export default function ChatRoom() {
   const { room, connectionState, connect, disconnect, sendText, toggleMicrophone } = useLiveKit();
@@ -23,7 +24,7 @@ export default function ChatRoom() {
     try {
       await connect({ topic, level });
     } catch (err) {
-      console.error("Failed to connect:", err);
+      console.error("Không kết nối được:", err);
     } finally {
       setConnecting(false);
     }
@@ -49,9 +50,9 @@ export default function ChatRoom() {
             <WifiOff className="w-8 h-8 text-primary-400" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-gray-800">Ready to practice?</h3>
+            <h3 className="text-lg font-semibold text-gray-800">Sẵn sàng luyện nói chưa?</h3>
             <p className="text-sm text-gray-500 mt-1">
-              Connect to start your English conversation session
+              Kết nối để bắt đầu phiên trò chuyện tiếng Anh
             </p>
           </div>
           <button
@@ -62,12 +63,12 @@ export default function ChatRoom() {
             {connecting ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Connecting...
+                Đang kết nối...
               </>
             ) : (
               <>
                 <Wifi className="w-4 h-4" />
-                Start Session
+                Bắt đầu phiên học
               </>
             )}
           </button>
@@ -82,14 +83,14 @@ export default function ChatRoom() {
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200/50 bg-white/60">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-          <span className="text-xs text-gray-500">Connected</span>
+          <span className="text-xs text-gray-500">Đã kết nối</span>
           <span className="text-xs text-gray-400">|</span>
-          <span className="text-xs text-gray-500 capitalize">{topic.replace(/_/g, " ")}</span>
+          <span className="text-xs text-gray-500">{topicLabel(topic)}</span>
           <span className="text-xs text-gray-400">|</span>
           <span className="text-xs font-medium text-primary-600">{level}</span>
         </div>
         <button onClick={handleDisconnect} className="text-xs text-red-500 hover:text-red-600">
-          Disconnect
+          Kết thúc
         </button>
       </div>
 
