@@ -58,7 +58,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center p-4">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">English AI Tutor</h1>
@@ -69,7 +69,7 @@ export default function Login() {
 
         <form
           onSubmit={handleSubmit}
-          className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-8 space-y-5"
+          className="surface-card space-y-5 p-8"
         >
           {isRegister && (
             <div>
@@ -78,7 +78,7 @@ export default function Login() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                className="field"
                 placeholder="Your name"
               />
             </div>
@@ -91,7 +91,7 @@ export default function Login() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
+              className="field"
               placeholder="you@example.com"
               autoComplete="email"
             />
@@ -104,8 +104,8 @@ export default function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
-              placeholder="••••••••"
+              className="field"
+              placeholder="Password"
               minLength={8}
               autoComplete={isRegister ? "new-password" : "current-password"}
             />
@@ -125,7 +125,7 @@ export default function Login() {
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                  className="field"
                   placeholder="Repeat your password"
                   minLength={8}
                   autoComplete="new-password"
@@ -139,7 +139,7 @@ export default function Login() {
                     type="text"
                     value={nativeLanguage}
                     onChange={(e) => setNativeLanguage(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
+                    className="field"
                     placeholder="vi"
                   />
                 </div>
@@ -149,7 +149,7 @@ export default function Login() {
                   <select
                     value={cefrLevel}
                     onChange={(e) => setCefrLevel(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition bg-white"
+                    className="field bg-white"
                   >
                     {levels.map((level) => (
                       <option key={level} value={level}>
@@ -171,7 +171,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-2"
+            className="btn-primary flex w-full items-center justify-center gap-2"
           >
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
             <span>{loading ? "Working..." : isRegister ? "Create Account" : "Sign In"}</span>
@@ -187,7 +187,7 @@ export default function Login() {
                 setPassword("");
                 setConfirmPassword("");
               }}
-              className="text-blue-600 hover:underline font-medium"
+              className="font-medium text-blue-700 hover:underline"
             >
               {isRegister ? "Sign In" : "Create one"}
             </button>
