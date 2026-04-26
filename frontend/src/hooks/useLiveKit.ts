@@ -12,6 +12,57 @@ import { getToken, type TokenRequest } from "../lib/api";
 import { useChatStore } from "../stores/chatStore";
 
 const CHAT_TOPIC = "ai-text-stream";
+type ChatRole = "user" | "assistant";
+type TranscriptBuffer = { texts: string[]; ids: Set<string> };
+
+function createTranscriptBuffers(): Record<ChatRole, TranscriptBuffer> {
+  return {
+    user: { texts: [], ids: new Set() },
+    assistant: { texts: [], ids: new Set() },
+  };
+}
+
+function normalizeTranscript(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isSimilarTranscript(a: string, b: string) {
+  const normalizedA = normalizeTranscript(a);
+  const normalizedB = normalizeTranscript(b);
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+  const minLength = Math.min(normalizedA.length, normalizedB.length);
+  return minLength >= 24 && (normalizedA.includes(normalizedB) || normalizedB.includes(normalizedA));
+}
+
+function combineTranscriptParts(parts: string[]) {
+  const combined: string[] = [];
+
+  for (const rawPart of parts) {
+    const part = rawPart.trim();
+    if (!part) continue;
+
+    const last = combined[combined.length - 1];
+    if (!last) {
+      combined.push(part);
+      continue;
+    }
+
+    const normalizedLast = normalizeTranscript(last);
+    const normalizedPart = normalizeTranscript(part);
+    if (normalizedLast === normalizedPart || normalizedLast.endsWith(normalizedPart)) {
+      continue;
+    }
+    if (normalizedPart.startsWith(normalizedLast)) {
+      combined[combined.length - 1] = part;
+      continue;
+    }
+
+    combined.push(part);
+  }
+
+  return combined.join(" ").replace(/\s+/g, " ").trim();
+}
 
 function getLiveKitUrl() {
   if (import.meta.env.VITE_LIVEKIT_URL) {
@@ -27,6 +78,8 @@ export function useLiveKit() {
   const sendingRef = useRef(false);
   const finalTranscriptIdsRef = useRef<Set<string>>(new Set());
   const transcriptContentRef = useRef<Map<string, number>>(new Map());
+  const transcriptBuffersRef = useRef<Record<ChatRole, TranscriptBuffer>>(createTranscriptBuffers());
+  const transcriptTimersRef = useRef<Partial<Record<ChatRole, number>>>({});
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
@@ -36,6 +89,15 @@ export function useLiveKit() {
   const connect = useCallback(
     async (req: TokenRequest) => {
       const { token } = await getToken(req);
+
+      finalTranscriptIdsRef.current.clear();
+      transcriptContentRef.current.clear();
+      transcriptBuffersRef.current = createTranscriptBuffers();
+      Object.values(transcriptTimersRef.current).forEach((timer) => {
+        if (timer) window.clearTimeout(timer);
+      });
+      transcriptTimersRef.current = {};
+      setCurrentTranscript("");
 
       const room = new Room({
         adaptiveStream: true,
@@ -65,26 +127,53 @@ export function useLiveKit() {
         track.detach().forEach((el) => el.remove());
       });
 
-      const normalizeTranscript = (value: string) =>
-        value.trim().replace(/\s+/g, " ").toLowerCase();
-
-      const hasRecentMessage = (role: "user" | "assistant", content: string) => {
+      const hasRecentMessage = (role: ChatRole, content: string) => {
         const now = Date.now();
-        const normalized = normalizeTranscript(content);
         return useChatStore
           .getState()
           .messages.some(
             (message) =>
               message.role === role &&
-              normalizeTranscript(message.content) === normalized &&
+              isSimilarTranscript(message.content, content) &&
               now - message.timestamp < 12_000
           );
       };
 
       const addTranscriptMessage = (
-        role: "user" | "assistant",
+        role: ChatRole,
+        content: string
+      ) => {
+        const trimmed = content.trim();
+        if (!trimmed) return;
+
+        const key = `${role}:${normalizeTranscript(trimmed)}`;
+        const now = Date.now();
+        const lastSeen = transcriptContentRef.current.get(key);
+        if (lastSeen && now - lastSeen < 8_000) {
+          return;
+        }
+
+        if (hasRecentMessage(role, trimmed)) {
+          transcriptContentRef.current.set(key, now);
+          return;
+        }
+
+        transcriptContentRef.current.set(key, now);
+        addMessage({ role, content: trimmed });
+      };
+
+      const flushTranscriptBuffer = (role: ChatRole) => {
+        const buffer = transcriptBuffersRef.current[role];
+        transcriptTimersRef.current[role] = undefined;
+        const text = combineTranscriptParts(buffer.texts);
+        transcriptBuffersRef.current[role] = { texts: [], ids: new Set() };
+        addTranscriptMessage(role, text);
+      };
+
+      const queueTranscriptMessage = (
+        role: ChatRole,
         content: string,
-        segmentId: string
+        segmentId?: string
       ) => {
         const trimmed = content.trim();
         if (!trimmed) return;
@@ -92,28 +181,24 @@ export function useLiveKit() {
         if (segmentId && finalTranscriptIdsRef.current.has(segmentId)) {
           return;
         }
-
-        const key = `${role}:${normalizeTranscript(trimmed)}`;
-        const now = Date.now();
-        const lastSeen = transcriptContentRef.current.get(key);
-        if (lastSeen && now - lastSeen < 2_000) {
-          return;
-        }
-
-        if (hasRecentMessage(role, trimmed)) {
-          transcriptContentRef.current.set(key, now);
-          if (segmentId) finalTranscriptIdsRef.current.add(segmentId);
-          return;
-        }
-
-        transcriptContentRef.current.set(key, now);
         if (segmentId) finalTranscriptIdsRef.current.add(segmentId);
-        addMessage({ role, content: trimmed });
 
-        if (finalTranscriptIdsRef.current.size > 200) {
-          finalTranscriptIdsRef.current = new Set(
-            Array.from(finalTranscriptIdsRef.current).slice(-100)
-          );
+        const buffer = transcriptBuffersRef.current[role];
+        if (!buffer.texts.some((item) => isSimilarTranscript(item, trimmed))) {
+          buffer.texts.push(trimmed);
+        }
+        if (segmentId) buffer.ids.add(segmentId);
+
+        const existingTimer = transcriptTimersRef.current[role];
+        if (existingTimer) window.clearTimeout(existingTimer);
+
+        const delay = role === "assistant" ? 1000 : 900;
+        transcriptTimersRef.current[role] = window.setTimeout(() => {
+          flushTranscriptBuffer(role);
+        }, delay);
+
+        if (finalTranscriptIdsRef.current.size > 250) {
+          finalTranscriptIdsRef.current = new Set(Array.from(finalTranscriptIdsRef.current).slice(-150));
         }
       };
 
@@ -129,7 +214,7 @@ export function useLiveKit() {
 
           if (segment.final) {
             setCurrentTranscript("");
-            addTranscriptMessage(role, text, segment.id);
+            queueTranscriptMessage(role, text, segment.id);
           } else {
             setCurrentTranscript(`${label}: ${text}`);
           }
@@ -158,13 +243,22 @@ export function useLiveKit() {
   );
 
   const disconnect = useCallback(() => {
+    (["user", "assistant"] as ChatRole[]).forEach((role) => {
+      const timer = transcriptTimersRef.current[role];
+      if (timer) window.clearTimeout(timer);
+      const text = combineTranscriptParts(transcriptBuffersRef.current[role].texts);
+      if (text) addMessage({ role, content: text });
+    });
+    transcriptTimersRef.current = {};
+    transcriptBuffersRef.current = createTranscriptBuffers();
+
     if (roomRef.current) {
       roomRef.current.disconnect();
       roomRef.current = null;
       setConnected(false);
       setCurrentTranscript("");
     }
-  }, [setConnected, setCurrentTranscript]);
+  }, [addMessage, setConnected, setCurrentTranscript]);
 
   const sendText = useCallback(async (text: string) => {
     const room = roomRef.current;

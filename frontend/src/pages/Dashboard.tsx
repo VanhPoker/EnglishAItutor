@@ -7,7 +7,9 @@ import {
   TrendingUp,
   Award,
   Calendar,
+  ArrowRight,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import ScoreDisplay from "../components/feedback/ScoreDisplay";
@@ -169,6 +171,13 @@ export default function Dashboard() {
                         {session.grammar_score}%
                       </span>
                     )}
+                    <Link
+                      to={`/review/${session.id}`}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700"
+                    >
+                      Review
+                      <ArrowRight className="w-3 h-3" />
+                    </Link>
                   </div>
                 </motion.div>
               ))

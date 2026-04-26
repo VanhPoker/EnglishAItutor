@@ -1,5 +1,18 @@
 import { create } from "zustand";
 
+function normalizeMessageContent(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isSimilarMessage(a: string, b: string) {
+  const normalizedA = normalizeMessageContent(a);
+  const normalizedB = normalizeMessageContent(b);
+  if (!normalizedA || !normalizedB) return false;
+  if (normalizedA === normalizedB) return true;
+  const minLength = Math.min(normalizedA.length, normalizedB.length);
+  return minLength >= 24 && (normalizedA.includes(normalizedB) || normalizedB.includes(normalizedA));
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -40,10 +53,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addMessage: (msg) =>
     set((s) => ({
-      messages: [
-        ...s.messages,
-        { ...msg, id: crypto.randomUUID(), timestamp: Date.now() },
-      ],
+      messages: (() => {
+        const now = Date.now();
+        const messages = [...s.messages];
+
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const existing = messages[index];
+          if (now - existing.timestamp > 12_000) break;
+          if (existing.role !== msg.role) continue;
+          if (!isSimilarMessage(existing.content, msg.content)) continue;
+
+          const existingText = normalizeMessageContent(existing.content);
+          const nextText = normalizeMessageContent(msg.content);
+          if (nextText.length > existingText.length && nextText.includes(existingText)) {
+            messages[index] = { ...existing, content: msg.content, timestamp: now };
+          }
+          return messages;
+        }
+
+        messages.push({ ...msg, id: crypto.randomUUID(), timestamp: now });
+        return messages;
+      })(),
     })),
 
   updateLastAssistantMessage: (content) =>

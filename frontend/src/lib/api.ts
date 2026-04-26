@@ -192,6 +192,30 @@ export interface SessionResponse {
   ended_at: string | null;
 }
 
+export interface ReviewError {
+  error_type: string;
+  original: string;
+  correction: string;
+  explanation: string | null;
+  count: number;
+}
+
+export interface ReviewDrill {
+  id: string;
+  error_type: string;
+  instruction: string;
+  prompt: string;
+  target: string;
+  hint: string | null;
+}
+
+export interface SessionReviewResponse {
+  session: SessionResponse;
+  stats_json: Record<string, unknown> | null;
+  top_errors: ReviewError[];
+  drills: ReviewDrill[];
+}
+
 export async function createSession(data: { room_name: string; topic: string; level: string }) {
   return apiFetch<SessionResponse>(`${API_BASE}/sessions`, {
     method: "POST",
@@ -208,6 +232,14 @@ export async function endSession(sessionId: string, data: Record<string, unknown
 
 export async function getSessions(limit = 20): Promise<SessionResponse[]> {
   return apiFetch<SessionResponse[]>(`${API_BASE}/sessions?limit=${limit}`);
+}
+
+export async function getLatestSessionReview(): Promise<SessionReviewResponse> {
+  return apiFetch<SessionReviewResponse>(`${API_BASE}/sessions/latest-review`);
+}
+
+export async function getSessionReview(sessionId: string): Promise<SessionReviewResponse> {
+  return apiFetch<SessionReviewResponse>(`${API_BASE}/sessions/${sessionId}/review`);
 }
 
 // ── Dashboard API ───────────────────────────────────────────────

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
@@ -64,6 +64,30 @@ class DashboardStats(BaseModel):
     streak_days: int
     common_errors: list[dict]
     recent_sessions: list[SessionResponse]
+
+
+class ReviewError(BaseModel):
+    error_type: str
+    original: str
+    correction: str
+    explanation: Optional[str] = None
+    count: int = 1
+
+
+class ReviewDrill(BaseModel):
+    id: str
+    error_type: str
+    instruction: str
+    prompt: str
+    target: str
+    hint: Optional[str] = None
+
+
+class SessionReviewResponse(BaseModel):
+    session: SessionResponse
+    stats_json: Optional[dict] = None
+    top_errors: list[ReviewError]
+    drills: list[ReviewDrill]
 
 
 class ErrorCreate(BaseModel):
@@ -133,6 +157,43 @@ async def list_sessions(
         )
         sessions = result.scalars().all()
         return [_session_response(s) for s in sessions]
+
+
+@router.get("/sessions/latest-review", response_model=SessionReviewResponse)
+async def get_latest_session_review(user: User = Depends(get_current_user)):
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await db.execute(
+            select(PracticeSession)
+            .where(
+                PracticeSession.user_id == user.id,
+                PracticeSession.ended_at.is_not(None),
+            )
+            .order_by(desc(PracticeSession.ended_at), desc(PracticeSession.started_at))
+            .limit(1)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="No completed practice session yet")
+
+        return await _build_session_review(db, session)
+
+
+@router.get("/sessions/{session_id}/review", response_model=SessionReviewResponse)
+async def get_session_review(session_id: str, user: User = Depends(get_current_user)):
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await db.execute(
+            select(PracticeSession).where(
+                PracticeSession.id == session_id,
+                PracticeSession.user_id == user.id,
+            )
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return await _build_session_review(db, session)
 
 
 # ── Error logging ────────────────────────────────────────────────
@@ -233,6 +294,71 @@ def _session_response(s: PracticeSession) -> SessionResponse:
         fluency_score=s.fluency_score,
         started_at=s.started_at,
         ended_at=s.ended_at,
+    )
+
+
+async def _build_session_review(db, session: PracticeSession) -> SessionReviewResponse:
+    count_label = func.count(ErrorLog.id).label("count")
+    errors_result = await db.execute(
+        select(
+            ErrorLog.error_type,
+            ErrorLog.original_text,
+            ErrorLog.corrected_text,
+            ErrorLog.explanation,
+            count_label,
+        )
+        .where(ErrorLog.session_id == session.id)
+        .group_by(
+            ErrorLog.error_type,
+            ErrorLog.original_text,
+            ErrorLog.corrected_text,
+            ErrorLog.explanation,
+        )
+        .order_by(count_label.desc(), ErrorLog.error_type.asc())
+        .limit(5)
+    )
+
+    top_errors = [
+        ReviewError(
+            error_type=row.error_type or "grammar",
+            original=row.original_text or "",
+            correction=row.corrected_text or "",
+            explanation=row.explanation,
+            count=int(row.count or 1),
+        )
+        for row in errors_result.all()
+    ]
+
+    if not top_errors:
+        for item in (session.stats_json or {}).get("top_error_patterns", [])[:5]:
+            top_errors.append(
+                ReviewError(
+                    error_type=item.get("error_type") or "grammar",
+                    original=item.get("original") or "",
+                    correction=item.get("correction") or "",
+                    explanation=item.get("explanation"),
+                    count=int(item.get("count") or 1),
+                )
+            )
+
+    drills = [
+        ReviewDrill(
+            id=f"{session.id}:{idx}",
+            error_type=item.error_type,
+            instruction="Rewrite the sentence with the corrected form.",
+            prompt=item.original,
+            target=item.correction,
+            hint=item.explanation,
+        )
+        for idx, item in enumerate(top_errors[:3], start=1)
+        if item.original and item.correction
+    ]
+
+    return SessionReviewResponse(
+        session=_session_response(session),
+        stats_json=session.stats_json,
+        top_errors=top_errors,
+        drills=drills,
     )
 
 
