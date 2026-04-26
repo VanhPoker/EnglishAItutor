@@ -9,6 +9,9 @@ import Practice from "./pages/Practice";
 import Dashboard from "./pages/Dashboard";
 import AdminUsers from "./pages/AdminUsers";
 import Review from "./pages/Review";
+import QuizResult from "./pages/QuizResult";
+import QuizStudio from "./pages/QuizStudio";
+import QuizTake from "./pages/QuizTake";
 import Login from "./pages/Login";
 
 function FullScreenLoader() {
@@ -113,6 +116,30 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Review />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/quizzes"
+        element={
+          <ProtectedRoute>
+            <QuizStudio />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/quizzes/:quizId"
+        element={
+          <ProtectedRoute>
+            <QuizTake />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/quiz-results/:attemptId"
+        element={
+          <ProtectedRoute>
+            <QuizResult />
           </ProtectedRoute>
         }
       />

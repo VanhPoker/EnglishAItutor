@@ -10,6 +10,7 @@ import {
   Sparkles,
   ArrowRight,
   Shield,
+  ListChecks,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
@@ -79,6 +80,10 @@ export default function Home() {
 
   const handleStart = () => {
     navigate("/practice");
+  };
+
+  const handleQuiz = () => {
+    navigate("/quizzes");
   };
 
   const handleClaimAdmin = async () => {
@@ -227,11 +232,16 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Start button */}
-          <button onClick={handleStart} className="btn-primary w-full flex items-center justify-center gap-2">
-            Start Practicing
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="grid md:grid-cols-2 gap-3">
+            <button onClick={handleStart} className="btn-primary w-full flex items-center justify-center gap-2">
+              Start Practicing
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <button onClick={handleQuiz} className="btn-secondary w-full flex items-center justify-center gap-2">
+              Create Quiz
+              <ListChecks className="w-4 h-4" />
+            </button>
+          </div>
         </Card>
       </div>
     </Layout>

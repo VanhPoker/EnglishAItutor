@@ -59,6 +59,40 @@ class PracticeSession(Base):
     errors: Mapped[list["ErrorLog"]] = relationship(back_populates="session")
 
 
+class Quiz(Base):
+    __tablename__ = "quizzes"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic: Mapped[str] = mapped_column(String(255), default="free_conversation")
+    level: Mapped[str] = mapped_column(String(2), default="B1")
+    source: Mapped[str] = mapped_column(String(32), default="ai")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    questions_json: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    attempts: Mapped[list["QuizAttempt"]] = relationship(back_populates="quiz")
+
+
+class QuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    quiz_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("quizzes.id"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    answers_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result_json: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    ai_review_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    correct_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_questions: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    quiz: Mapped["Quiz"] = relationship(back_populates="attempts")
+
+
 class ErrorLog(Base):
     __tablename__ = "error_logs"
 
