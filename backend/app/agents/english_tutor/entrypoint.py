@@ -44,6 +44,13 @@ _active_tasks: set[asyncio.Task] = set()
 _memory_manager: Optional[MemoryManager] = None
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 async def _get_memory_manager() -> Optional[MemoryManager]:
     """Lazy-initialize the memory manager."""
     global _memory_manager
@@ -114,7 +121,16 @@ async def entrypoint(ctx: JobContext):
         llm=LangGraphAdapter(graph=graph, config=graph_config),
         tts=EdgeTTS(voice="en-US-JennyNeural"),
         stt=WhisperSTT(model_size="base.en"),
-        vad=silero.VAD.load(),
+        vad=silero.VAD.load(
+            min_speech_duration=_float_env("VAD_MIN_SPEECH_DURATION", 0.15),
+            min_silence_duration=_float_env("VAD_MIN_SILENCE_DURATION", 1.05),
+            prefix_padding_duration=_float_env("VAD_PREFIX_PADDING_DURATION", 0.55),
+            activation_threshold=_float_env("VAD_ACTIVATION_THRESHOLD", 0.55),
+        ),
+        turn_detection="vad",
+        min_endpointing_delay=_float_env("AGENT_MIN_ENDPOINTING_DELAY", 1.1),
+        max_endpointing_delay=_float_env("AGENT_MAX_ENDPOINTING_DELAY", 4.5),
+        preemptive_generation=False,
         allow_interruptions=False,
     )
 
@@ -158,7 +174,7 @@ async def entrypoint(ctx: JobContext):
         ),
         room=ctx.room,
         room_input_options=RoomInputOptions(
-            text_enabled=True,
+            text_enabled=False,
             video_enabled=False,
             audio_enabled=True,
         ),

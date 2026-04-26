@@ -1,0 +1,294 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Target,
+  XCircle,
+} from "lucide-react";
+import Layout from "../components/ui/Layout";
+import Card from "../components/ui/Card";
+import Badge from "../components/ui/Badge";
+import {
+  getLatestSessionReview,
+  getSessionReview,
+  type SessionReviewResponse,
+} from "../lib/api";
+
+type CheckState = "correct" | "retry";
+
+function normalizeAnswer(value: string) {
+  return value.trim().replace(/\s+/g, " ").replace(/[.!?]+$/g, "").toLowerCase();
+}
+
+function isCloseEnough(answer: string, target: string) {
+  const normalizedAnswer = normalizeAnswer(answer);
+  const normalizedTarget = normalizeAnswer(target);
+  if (!normalizedAnswer || !normalizedTarget) return false;
+  return (
+    normalizedAnswer === normalizedTarget ||
+    normalizedAnswer.includes(normalizedTarget) ||
+    normalizedTarget.includes(normalizedAnswer)
+  );
+}
+
+function scoreLabel(value: number | null) {
+  if (value == null) return "N/A";
+  return `${value}%`;
+}
+
+export default function Review() {
+  const { sessionId } = useParams();
+  const [review, setReview] = useState<SessionReviewResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [checks, setChecks] = useState<Record<string, CheckState>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+
+    const load = async () => {
+      attempts += 1;
+      try {
+        const data = sessionId
+          ? await getSessionReview(sessionId)
+          : await getLatestSessionReview();
+        if (cancelled) return;
+        setReview(data);
+        setError("");
+        setLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : "Review is not ready yet";
+        if (!sessionId && attempts < 8) {
+          timer = window.setTimeout(load, 1000);
+          return;
+        }
+        setError(message);
+        setLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [sessionId]);
+
+  const stats = useMemo(() => {
+    return (review?.stats_json || {}) as {
+      working_level?: string;
+      recommended_profile_level?: string | null;
+      quality_average?: number;
+      error_type_counts?: Record<string, number>;
+    };
+  }, [review]);
+
+  const handleCheck = (drillId: string, target: string) => {
+    setChecks((prev) => ({
+      ...prev,
+      [drillId]: isCloseEnough(answers[drillId] || "", target) ? "correct" : "retry",
+    }));
+  };
+
+  if (loading) {
+    return (
+      <Layout>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="flex items-center gap-3 text-sm text-gray-500">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Preparing your review...
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error || !review) {
+    return (
+      <Layout>
+        <div className="max-w-3xl mx-auto px-4 py-10">
+          <Card>
+            <div className="flex items-start gap-3">
+              <XCircle className="w-5 h-5 text-amber-500 mt-0.5" />
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">No completed session yet</h1>
+                <p className="text-sm text-gray-500 mt-1">{error || "Finish a practice session first."}</p>
+                <Link to="/practice" className="btn-primary inline-flex items-center gap-2 mt-5">
+                  Start practice
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </Layout>
+    );
+  }
+
+  const session = review.session;
+
+  return (
+    <Layout>
+      <div className="max-w-5xl mx-auto px-4 py-8">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Session Review</h1>
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <Badge variant="info">{session.level}</Badge>
+                <Badge>{session.topic.replace(/_/g, " ")}</Badge>
+                {stats.working_level && <Badge variant="success">Working level {stats.working_level}</Badge>}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Link to="/practice" className="btn-primary inline-flex items-center gap-2">
+                Practice again
+                <RefreshCw className="w-4 h-4" />
+              </Link>
+              <Link to="/dashboard" className="btn-secondary inline-flex items-center gap-2">
+                Dashboard
+              </Link>
+            </div>
+          </div>
+        </motion.div>
+
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+          {[
+            { icon: Clock, label: "Minutes", value: Math.round(session.duration_minutes) },
+            { icon: MessageSquare, label: "Turns", value: session.total_turns },
+            { icon: Target, label: "Errors", value: session.total_errors },
+            { icon: CheckCircle2, label: "Grammar", value: scoreLabel(session.grammar_score) },
+            { icon: CheckCircle2, label: "Fluency", value: scoreLabel(session.fluency_score) },
+          ].map((item, index) => (
+            <motion.div
+              key={item.label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.04 }}
+            >
+              <Card className="p-4">
+                <item.icon className="w-4 h-4 text-primary-500 mb-2" />
+                <p className="text-xl font-bold text-gray-900">{item.value}</p>
+                <p className="text-xs text-gray-500">{item.label}</p>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
+
+        <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-6">
+          <section>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Mistakes to fix</h2>
+            <div className="space-y-3">
+              {review.top_errors.length === 0 ? (
+                <Card>
+                  <p className="text-sm text-gray-500">
+                    No repeated errors were captured in this session.
+                  </p>
+                </Card>
+              ) : (
+                review.top_errors.map((item, index) => (
+                  <Card key={`${item.original}-${index}`} className="p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <Badge variant={item.error_type === "grammar" ? "error" : "warning"}>
+                        {item.error_type.replace(/_/g, " ")}
+                      </Badge>
+                      <span className="text-xs text-gray-400">{item.count}x</span>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      <div>
+                        <p className="text-xs font-medium text-gray-400">Original</p>
+                        <p className="text-sm text-red-500 line-through decoration-red-300">
+                          {item.original || "No original sentence captured"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-gray-400">Better</p>
+                        <p className="text-sm font-medium text-green-700">
+                          {item.correction || "No correction captured"}
+                        </p>
+                      </div>
+                      {item.explanation && (
+                        <p className="text-sm text-gray-600 border-t border-gray-100 pt-3">
+                          {item.explanation}
+                        </p>
+                      )}
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Drills from this session</h2>
+            <div className="space-y-3">
+              {review.drills.length === 0 ? (
+                <Card>
+                  <p className="text-sm text-gray-500">
+                    A longer conversation will create better review drills.
+                  </p>
+                </Card>
+              ) : (
+                review.drills.map((drill) => {
+                  const state = checks[drill.id];
+                  return (
+                    <Card key={drill.id} className="p-5">
+                      <Badge variant="info">{drill.error_type.replace(/_/g, " ")}</Badge>
+                      <p className="text-sm font-medium text-gray-900 mt-3">{drill.instruction}</p>
+                      <p className="text-sm text-gray-500 mt-2">{drill.prompt}</p>
+                      <textarea
+                        value={answers[drill.id] || ""}
+                        onChange={(event) => {
+                          setAnswers((prev) => ({ ...prev, [drill.id]: event.target.value }));
+                          setChecks((prev) => {
+                            const next = { ...prev };
+                            delete next[drill.id];
+                            return next;
+                          });
+                        }}
+                        className="mt-3 w-full min-h-24 resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                        placeholder="Write the corrected sentence..."
+                      />
+                      <div className="flex items-center justify-between gap-3 mt-3">
+                        <button
+                          type="button"
+                          onClick={() => handleCheck(drill.id, drill.target)}
+                          className="btn-secondary px-4 py-2 inline-flex items-center gap-2"
+                        >
+                          Check
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                        {state === "correct" && (
+                          <span className="text-xs font-medium text-green-600">Looks correct</span>
+                        )}
+                        {state === "retry" && (
+                          <span className="text-xs font-medium text-amber-600">Try matching the correction</span>
+                        )}
+                      </div>
+                      {(state === "retry" || state === "correct") && (
+                        <p className="text-xs text-gray-500 mt-3">
+                          Target: <span className="font-medium text-gray-700">{drill.target}</span>
+                        </p>
+                      )}
+                    </Card>
+                  );
+                })
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    </Layout>
+  );
+}

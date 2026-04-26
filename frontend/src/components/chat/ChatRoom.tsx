@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ConnectionState } from "livekit-client";
 import { Wifi, WifiOff, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useLiveKit } from "../../hooks/useLiveKit";
 import { useUserStore } from "../../stores/userStore";
 import { useChatStore } from "../../stores/chatStore";
@@ -12,6 +13,7 @@ import AudioVisualizer from "../voice/AudioVisualizer";
 export default function ChatRoom() {
   const { room, connectionState, connect, disconnect, sendText, toggleMicrophone } = useLiveKit();
   const { topic, level } = useUserStore();
+  const navigate = useNavigate();
   const isConnected = useChatStore((s) => s.isConnected);
   const [micEnabled, setMicEnabled] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -30,7 +32,8 @@ export default function ChatRoom() {
   const handleDisconnect = useCallback(() => {
     disconnect();
     setMicEnabled(false);
-  }, [disconnect]);
+    navigate("/review");
+  }, [disconnect, navigate]);
 
   const handleToggleMic = useCallback(async () => {
     const enabled = await toggleMicrophone();

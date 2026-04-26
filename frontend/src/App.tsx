@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import Practice from "./pages/Practice";
 import Dashboard from "./pages/Dashboard";
 import AdminUsers from "./pages/AdminUsers";
+import Review from "./pages/Review";
 import Login from "./pages/Login";
 
 function FullScreenLoader() {
@@ -96,6 +97,22 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/review"
+        element={
+          <ProtectedRoute>
+            <Review />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/review/:sessionId"
+        element={
+          <ProtectedRoute>
+            <Review />
           </ProtectedRoute>
         }
       />
