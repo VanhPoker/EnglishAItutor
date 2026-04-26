@@ -19,6 +19,7 @@ import {
   getSessionReview,
   type SessionReviewResponse,
 } from "../lib/api";
+import { focusLabel, topicLabel } from "../lib/labels";
 
 type CheckState = "correct" | "retry";
 
@@ -38,7 +39,7 @@ function isCloseEnough(answer: string, target: string) {
 }
 
 function scoreLabel(value: number | null) {
-  if (value == null) return "N/A";
+  if (value == null) return "Chưa có";
   return `${value}%`;
 }
 
@@ -67,7 +68,7 @@ export default function Review() {
         setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : "Review is not ready yet";
+        const message = err instanceof Error ? err.message : "Phần ôn lỗi chưa sẵn sàng";
         if (!sessionId && attempts < 8) {
           timer = window.setTimeout(load, 1000);
           return;
@@ -107,7 +108,7 @@ export default function Review() {
         <div className="min-h-[60vh] flex items-center justify-center">
           <div className="flex items-center gap-3 text-sm text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin" />
-            Preparing your review...
+            Đang chuẩn bị phần ôn lỗi...
           </div>
         </div>
       </Layout>
@@ -122,10 +123,10 @@ export default function Review() {
             <div className="flex items-start gap-3">
               <XCircle className="w-5 h-5 text-amber-500 mt-0.5" />
               <div>
-                <h1 className="text-lg font-semibold text-gray-900">No completed session yet</h1>
-                <p className="text-sm text-gray-500 mt-1">{error || "Finish a practice session first."}</p>
+                <h1 className="text-lg font-semibold text-gray-900">Chưa có phiên học hoàn thành</h1>
+                <p className="text-sm text-gray-500 mt-1">{error || "Hãy hoàn thành một phiên luyện nói trước."}</p>
                 <Link to="/practice" className="btn-primary inline-flex items-center gap-2 mt-5">
-                  Start practice
+                  Bắt đầu luyện nói
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
@@ -144,20 +145,20 @@ export default function Review() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Session Review</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Ôn lại phiên học</h1>
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <Badge variant="info">{session.level}</Badge>
-                <Badge>{session.topic.replace(/_/g, " ")}</Badge>
-                {stats.working_level && <Badge variant="success">Working level {stats.working_level}</Badge>}
+                <Badge>{topicLabel(session.topic)}</Badge>
+                {stats.working_level && <Badge variant="success">Mức đang luyện {stats.working_level}</Badge>}
               </div>
             </div>
             <div className="flex gap-2">
               <Link to="/practice" className="btn-primary inline-flex items-center gap-2">
-                Practice again
+                Luyện lại
                 <RefreshCw className="w-4 h-4" />
               </Link>
               <Link to="/dashboard" className="btn-secondary inline-flex items-center gap-2">
-                Dashboard
+                Tiến độ
               </Link>
             </div>
           </div>
@@ -165,11 +166,11 @@ export default function Review() {
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[
-            { icon: Clock, label: "Minutes", value: Math.round(session.duration_minutes) },
-            { icon: MessageSquare, label: "Turns", value: session.total_turns },
-            { icon: Target, label: "Errors", value: session.total_errors },
-            { icon: CheckCircle2, label: "Grammar", value: scoreLabel(session.grammar_score) },
-            { icon: CheckCircle2, label: "Fluency", value: scoreLabel(session.fluency_score) },
+            { icon: Clock, label: "Phút học", value: Math.round(session.duration_minutes) },
+            { icon: MessageSquare, label: "Lượt trao đổi", value: session.total_turns },
+            { icon: Target, label: "Lỗi sai", value: session.total_errors },
+            { icon: CheckCircle2, label: "Ngữ pháp", value: scoreLabel(session.grammar_score) },
+            { icon: CheckCircle2, label: "Trôi chảy", value: scoreLabel(session.fluency_score) },
           ].map((item, index) => (
             <motion.div
               key={item.label}
@@ -188,12 +189,12 @@ export default function Review() {
 
         <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-6">
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Mistakes to fix</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Lỗi cần sửa</h2>
             <div className="space-y-3">
               {review.top_errors.length === 0 ? (
                 <Card>
                   <p className="text-sm text-gray-500">
-                    No repeated errors were captured in this session.
+                    Phiên này chưa ghi nhận lỗi lặp lại.
                   </p>
                 </Card>
               ) : (
@@ -201,21 +202,21 @@ export default function Review() {
                   <Card key={`${item.original}-${index}`} className="p-5">
                     <div className="flex items-start justify-between gap-3">
                       <Badge variant={item.error_type === "grammar" ? "error" : "warning"}>
-                        {item.error_type.replace(/_/g, " ")}
+                        {focusLabel(item.error_type)}
                       </Badge>
                       <span className="text-xs text-gray-400">{item.count}x</span>
                     </div>
                     <div className="mt-4 space-y-3">
                       <div>
-                        <p className="text-xs font-medium text-gray-400">Original</p>
+                        <p className="text-xs font-medium text-gray-400">Câu gốc</p>
                         <p className="text-sm text-red-500 line-through decoration-red-300">
-                          {item.original || "No original sentence captured"}
+                          {item.original || "Chưa ghi nhận câu gốc"}
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs font-medium text-gray-400">Better</p>
+                        <p className="text-xs font-medium text-gray-400">Cách nói tốt hơn</p>
                         <p className="text-sm font-medium text-green-700">
-                          {item.correction || "No correction captured"}
+                          {item.correction || "Chưa có câu sửa"}
                         </p>
                       </div>
                       {item.explanation && (
@@ -231,12 +232,12 @@ export default function Review() {
           </section>
 
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Drills from this session</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Bài tập từ phiên học</h2>
             <div className="space-y-3">
               {review.drills.length === 0 ? (
                 <Card>
                   <p className="text-sm text-gray-500">
-                    A longer conversation will create better review drills.
+                    Trò chuyện lâu hơn sẽ tạo được bài ôn tốt hơn.
                   </p>
                 </Card>
               ) : (
@@ -244,7 +245,7 @@ export default function Review() {
                   const state = checks[drill.id];
                   return (
                     <Card key={drill.id} className="p-5">
-                      <Badge variant="info">{drill.error_type.replace(/_/g, " ")}</Badge>
+                      <Badge variant="info">{focusLabel(drill.error_type)}</Badge>
                       <p className="text-sm font-medium text-gray-900 mt-3">{drill.instruction}</p>
                       <p className="text-sm text-gray-500 mt-2">{drill.prompt}</p>
                       <textarea
@@ -258,7 +259,7 @@ export default function Review() {
                           });
                         }}
                         className="mt-3 w-full min-h-24 resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
-                        placeholder="Write the corrected sentence..."
+                        placeholder="Viết câu đã sửa..."
                       />
                       <div className="flex items-center justify-between gap-3 mt-3">
                         <button
@@ -266,19 +267,19 @@ export default function Review() {
                           onClick={() => handleCheck(drill.id, drill.target)}
                           className="btn-secondary px-4 py-2 inline-flex items-center gap-2"
                         >
-                          Check
+                          Kiểm tra
                           <ArrowRight className="w-4 h-4" />
                         </button>
                         {state === "correct" && (
-                          <span className="text-xs font-medium text-green-600">Looks correct</span>
+                          <span className="text-xs font-medium text-green-600">Có vẻ đúng</span>
                         )}
                         {state === "retry" && (
-                          <span className="text-xs font-medium text-amber-600">Try matching the correction</span>
+                          <span className="text-xs font-medium text-amber-600">Thử viết sát với câu sửa hơn</span>
                         )}
                       </div>
                       {(state === "retry" || state === "correct") && (
                         <p className="text-xs text-gray-500 mt-3">
-                          Target: <span className="font-medium text-gray-700">{drill.target}</span>
+                          Đáp án: <span className="font-medium text-gray-700">{drill.target}</span>
                         </p>
                       )}
                     </Card>

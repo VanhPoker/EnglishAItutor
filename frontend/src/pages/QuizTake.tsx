@@ -12,12 +12,9 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import { getQuiz, submitQuiz, type QuizResponse } from "../lib/api";
+import { focusLabel, topicLabel } from "../lib/labels";
 
 const optionLabels = ["A", "B", "C", "D", "E", "F"];
-
-function formatTopic(value: string) {
-  return value.replace(/_/g, " ");
-}
 
 export default function QuizTake() {
   const { quizId } = useParams();
@@ -33,7 +30,7 @@ export default function QuizTake() {
     if (!quizId) return;
     getQuiz(quizId)
       .then(setQuiz)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load quiz"))
+      .catch((err) => setError(err instanceof Error ? err.message : "Không tải được quiz"))
       .finally(() => setLoading(false));
   }, [quizId]);
 
@@ -51,7 +48,7 @@ export default function QuizTake() {
       const attempt = await submitQuiz(quiz.id, answers);
       navigate(`/quiz-results/${attempt.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit quiz");
+      setError(err instanceof Error ? err.message : "Không nộp được bài quiz");
     } finally {
       setSubmitting(false);
     }
@@ -63,7 +60,7 @@ export default function QuizTake() {
         <div className="flex min-h-[60vh] items-center justify-center">
           <div className="flex items-center gap-3 text-sm text-gray-500">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading quiz...
+            Đang tải quiz...
           </div>
         </div>
       </Layout>
@@ -75,10 +72,10 @@ export default function QuizTake() {
       <Layout>
         <div className="mx-auto max-w-3xl px-4 py-10">
           <Card>
-            <h1 className="text-lg font-semibold text-gray-900">Quiz unavailable</h1>
-            <p className="mt-1 text-sm text-gray-500">{error || "This quiz does not have questions."}</p>
+            <h1 className="text-lg font-semibold text-gray-900">Không mở được quiz</h1>
+            <p className="mt-1 text-sm text-gray-500">{error || "Quiz này chưa có câu hỏi."}</p>
             <Link to="/quizzes" className="btn-primary mt-5 inline-flex items-center gap-2">
-              Back to quizzes
+              Quay lại danh sách quiz
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Card>
@@ -99,13 +96,13 @@ export default function QuizTake() {
               <ArrowLeft className="h-4 w-4 text-gray-600" />
             </Link>
             <div>
-              <p className="text-sm font-semibold text-blue-700">Quiz</p>
+              <p className="text-sm font-semibold text-blue-700">Bài quiz</p>
               <h1 className="mt-1 text-3xl font-bold text-gray-900">{quiz.title}</h1>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge variant="info">{quiz.level}</Badge>
-                <Badge>{formatTopic(quiz.topic)}</Badge>
+                <Badge>{topicLabel(quiz.topic)}</Badge>
                 <Badge variant={unansweredCount === 0 ? "success" : "warning"}>
-                  {answeredCount}/{quiz.questions.length} answered
+                  Đã trả lời {answeredCount}/{quiz.questions.length}
                 </Badge>
               </div>
             </div>
@@ -117,7 +114,7 @@ export default function QuizTake() {
             className="btn-primary inline-flex items-center justify-center gap-2"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Submit quiz
+            Nộp bài
           </button>
         </div>
 
@@ -130,12 +127,12 @@ export default function QuizTake() {
         <Card className="mb-6 p-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-gray-900">Progress</p>
+              <p className="text-sm font-semibold text-gray-900">Tiến độ</p>
               <p className="text-sm text-gray-500">
-                {unansweredCount === 0 ? "Ready to submit." : `${unansweredCount} question${unansweredCount > 1 ? "s" : ""} left.`}
+                {unansweredCount === 0 ? "Có thể nộp bài." : `Còn ${unansweredCount} câu chưa trả lời.`}
               </p>
             </div>
-            <span className="text-sm font-semibold text-gray-700">{progress}% complete</span>
+            <span className="text-sm font-semibold text-gray-700">Hoàn thành {progress}%</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-gray-100">
             <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
@@ -144,8 +141,8 @@ export default function QuizTake() {
 
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
           <Card className="p-4 lg:sticky lg:top-6 lg:self-start">
-            <h2 className="text-sm font-semibold text-gray-900">Questions</h2>
-            <p className="mt-1 text-xs text-gray-500">Jump between items without losing answers.</p>
+            <h2 className="text-sm font-semibold text-gray-900">Câu hỏi</h2>
+            <p className="mt-1 text-xs text-gray-500">Chuyển câu mà không mất đáp án.</p>
             <div className="mt-4 grid grid-cols-5 gap-2 lg:grid-cols-1">
               {quiz.questions.map((question, index) => {
                 const isAnswered = Boolean((answers[question.id] || "").trim());
@@ -163,7 +160,7 @@ export default function QuizTake() {
                         : "border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
                     }`}
                   >
-                    <span>Q{index + 1}</span>
+                    <span>Câu {index + 1}</span>
                     {isAnswered && <CheckCircle2 className="hidden h-4 w-4 lg:block" />}
                   </button>
                 );
@@ -175,9 +172,9 @@ export default function QuizTake() {
             <Card>
               <div className="mb-6 flex items-start justify-between gap-3">
                 <div>
-                  <Badge variant="warning">{formatTopic(activeQuestion.focus)}</Badge>
+                  <Badge variant="warning">{focusLabel(activeQuestion.focus)}</Badge>
                   <p className="mt-4 text-sm font-semibold text-gray-500">
-                    Question {activeIndex + 1} of {quiz.questions.length}
+                    Câu {activeIndex + 1}/{quiz.questions.length}
                   </p>
                   <h2 className="mt-2 text-xl font-semibold leading-relaxed text-gray-900">
                     {activeQuestion.prompt}
@@ -214,13 +211,13 @@ export default function QuizTake() {
                 </div>
               ) : (
                 <label className="block">
-                  <span className="field-label">Your answer</span>
+                  <span className="field-label">Câu trả lời của bạn</span>
                   <input
                     value={answers[activeQuestion.id] || ""}
                     onChange={(event) =>
                       setAnswers((prev) => ({ ...prev, [activeQuestion.id]: event.target.value }))
                     }
-                    placeholder="Type your answer..."
+                    placeholder="Nhập câu trả lời..."
                     className="field py-3"
                   />
                 </label>
@@ -233,7 +230,7 @@ export default function QuizTake() {
                   onClick={() => setActiveIndex((value) => Math.max(0, value - 1))}
                   className="btn-secondary"
                 >
-                  Previous
+                  Câu trước
                 </button>
                 <button
                   type="button"
@@ -241,7 +238,7 @@ export default function QuizTake() {
                   onClick={() => setActiveIndex((value) => Math.min(quiz.questions.length - 1, value + 1))}
                   className="btn-secondary inline-flex items-center gap-2"
                 >
-                  Next
+                  Câu tiếp
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </div>

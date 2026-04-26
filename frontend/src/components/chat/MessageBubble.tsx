@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { Bot, User } from "lucide-react";
 import type { ChatMessage } from "../../stores/chatStore";
+import { focusLabel } from "../../lib/labels";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -44,7 +45,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           <div className="mt-2 space-y-1.5 border-t border-gray-200/50 pt-2">
             {message.corrections.map((c, i) => (
               <div key={i} className="text-xs bg-amber-50 border border-amber-200 rounded-lg p-2">
-                <span className="font-medium text-amber-700">{c.errorType}:</span>{" "}
+                <span className="font-medium text-amber-700">{focusLabel(c.errorType)}:</span>{" "}
                 <span className="line-through text-red-400">{c.original}</span>{" "}
                 <span className="text-green-600 font-medium">{c.correction}</span>
                 {c.explanation && (

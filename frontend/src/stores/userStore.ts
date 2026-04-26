@@ -19,7 +19,7 @@ interface UserState {
 
 export const useUserStore = create<UserState>((set) => ({
   userId: `user-${Date.now()}`,
-  userName: "Learner",
+  userName: "Học viên",
   level: "B1",
   topic: "free_conversation",
   sessionStats: {

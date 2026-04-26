@@ -21,32 +21,29 @@ import {
   getDashboard,
   type DashboardStats,
 } from "../lib/api";
+import { focusLabel, topicLabel } from "../lib/labels";
 import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
 const topics = [
-  { name: "Free Conversation", value: "free_conversation", hint: "Open speaking" },
-  { name: "Daily Life", value: "daily_life", hint: "Routine phrases" },
-  { name: "Travel", value: "travel", hint: "Trips and plans" },
-  { name: "Work & Career", value: "work_career", hint: "Meetings and jobs" },
-  { name: "Food & Cooking", value: "food_cooking", hint: "Ordering and recipes" },
-  { name: "Movies & Books", value: "movies_books", hint: "Opinions and stories" },
-  { name: "Technology", value: "technology", hint: "Products and tools" },
-  { name: "Health & Fitness", value: "health_fitness", hint: "Habits and advice" },
+  { name: "Trò chuyện tự do", value: "free_conversation", hint: "Luyện phản xạ nói" },
+  { name: "Đời sống hằng ngày", value: "daily_life", hint: "Câu nói thường dùng" },
+  { name: "Du lịch", value: "travel", hint: "Kế hoạch và tình huống" },
+  { name: "Công việc", value: "work_career", hint: "Họp, phỏng vấn, nghề nghiệp" },
+  { name: "Ăn uống", value: "food_cooking", hint: "Gọi món và nấu ăn" },
+  { name: "Phim và sách", value: "movies_books", hint: "Kể chuyện, nêu ý kiến" },
+  { name: "Công nghệ", value: "technology", hint: "Sản phẩm và công cụ" },
+  { name: "Sức khoẻ", value: "health_fitness", hint: "Thói quen và lời khuyên" },
 ];
 
 const levels = [
-  { value: "A1", label: "A1", hint: "Simple phrases" },
-  { value: "A2", label: "A2", hint: "Everyday tasks" },
-  { value: "B1", label: "B1", hint: "Common situations" },
-  { value: "B2", label: "B2", hint: "Fluent discussion" },
-  { value: "C1", label: "C1", hint: "Precise expression" },
-  { value: "C2", label: "C2", hint: "Near native" },
+  { value: "A1", label: "A1", hint: "Cụm từ đơn giản" },
+  { value: "A2", label: "A2", hint: "Giao tiếp thường ngày" },
+  { value: "B1", label: "B1", hint: "Tình huống phổ biến" },
+  { value: "B2", label: "B2", hint: "Thảo luận trôi chảy" },
+  { value: "C1", label: "C1", hint: "Diễn đạt chính xác" },
+  { value: "C2", label: "C2", hint: "Gần bản ngữ" },
 ];
-
-function formatTopic(value: string) {
-  return value.replace(/_/g, " ");
-}
 
 export default function Home() {
   const navigate = useNavigate();
@@ -98,15 +95,15 @@ export default function Home() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-blue-700">Workspace</p>
-              <h1 className="mt-1 text-3xl font-bold text-gray-900">Today&apos;s learning plan</h1>
+              <p className="text-sm font-semibold text-blue-700">Không gian học tập</p>
+              <h1 className="mt-1 text-3xl font-bold text-gray-900">Kế hoạch học hôm nay</h1>
               <p className="mt-2 max-w-2xl text-sm text-gray-600">
-                Start with a conversation, review captured mistakes, then turn weak points into a short quiz.
+                Bắt đầu bằng một cuộc trò chuyện, xem lại lỗi đã ghi nhận, rồi biến điểm yếu thành bài quiz ngắn.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge variant="info" size="md">{level}</Badge>
-              <Badge size="md">{formatTopic(currentTopic.value)}</Badge>
+              <Badge size="md">{topicLabel(currentTopic.value)}</Badge>
             </div>
           </div>
         </motion.div>
@@ -119,15 +116,15 @@ export default function Home() {
                   <Shield className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-gray-900">Admin access is unclaimed</h2>
+                  <h2 className="font-semibold text-gray-900">Chưa có tài khoản quản trị</h2>
                   <p className="mt-1 text-sm text-gray-600">
-                    Claim once to manage users and roles from the admin area.
+                    Nhận quyền một lần để quản lý người dùng và phân quyền.
                   </p>
                 </div>
               </div>
 
               <Button type="button" onClick={() => void handleClaimAdmin()} loading={claimingAdmin}>
-                Claim Admin
+                Nhận quyền quản trị
               </Button>
             </div>
           </Card>
@@ -137,35 +134,35 @@ export default function Home() {
           <Card>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Next actions</h2>
-                <p className="mt-1 text-sm text-gray-500">Use the loop that makes the product different from plain chat.</p>
+                <h2 className="text-lg font-semibold text-gray-900">Việc nên làm tiếp</h2>
+                <p className="mt-1 text-sm text-gray-500">Luyện nói, ôn lỗi, rồi làm quiz từ lỗi thật.</p>
               </div>
-              <Badge variant="success">Learning loop</Badge>
+              <Badge variant="success">Lộ trình học</Badge>
             </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {[
                 {
-                  title: "Speak with tutor",
-                  body: `${level} practice about ${formatTopic(topic)}.`,
+                  title: "Nói với gia sư",
+                  body: `Luyện ${level} theo chủ đề ${topicLabel(topic)}.`,
                   icon: MessageSquare,
-                  action: "Start practice",
+                  action: "Bắt đầu luyện nói",
                   to: "/practice",
                   tone: "bg-blue-50 text-blue-700 ring-blue-100",
                 },
                 {
-                  title: "Review mistakes",
-                  body: recentSession ? "Open feedback from the last completed session." : "Finish one session to unlock review.",
+                  title: "Ôn lại lỗi sai",
+                  body: recentSession ? "Mở phần nhận xét từ phiên học gần nhất." : "Hoàn thành một phiên học để có phần ôn lỗi.",
                   icon: Target,
-                  action: "Open review",
+                  action: "Mở phần ôn lỗi",
                   to: "/review",
                   tone: "bg-green-50 text-green-700 ring-green-100",
                 },
                 {
-                  title: "Take a quiz",
-                  body: weakArea ? `Focus on ${weakArea.replace(/_/g, " ")} mistakes.` : "Generate questions from a topic or mistakes.",
+                  title: "Làm bài quiz",
+                  body: weakArea ? `Tập trung vào lỗi ${focusLabel(weakArea)}.` : "Tạo câu hỏi từ chủ đề hoặc lỗi sai.",
                   icon: ClipboardList,
-                  action: "Open quizzes",
+                  action: "Mở bài quiz",
                   to: "/quizzes",
                   tone: "bg-amber-50 text-amber-700 ring-amber-100",
                 },
@@ -195,23 +192,23 @@ export default function Home() {
                 <BarChart3 className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="font-semibold text-gray-900">Progress snapshot</h2>
-                <p className="text-xs text-gray-500">Conversation data so far</p>
+                <h2 className="font-semibold text-gray-900">Tổng quan tiến độ</h2>
+                <p className="text-xs text-gray-500">Dữ liệu luyện nói đã ghi nhận</p>
               </div>
             </div>
 
             <div className="mt-5 grid grid-cols-3 gap-3 text-center">
               <div className="rounded-lg bg-gray-50 p-3">
                 <p className="text-xl font-bold text-gray-900">{stats?.total_sessions ?? 0}</p>
-                <p className="text-xs text-gray-500">Sessions</p>
+                <p className="text-xs text-gray-500">Phiên học</p>
               </div>
               <div className="rounded-lg bg-gray-50 p-3">
                 <p className="text-xl font-bold text-gray-900">{Math.round(stats?.total_minutes ?? 0)}</p>
-                <p className="text-xs text-gray-500">Minutes</p>
+                <p className="text-xs text-gray-500">Phút học</p>
               </div>
               <div className="rounded-lg bg-gray-50 p-3">
                 <p className="text-xl font-bold text-gray-900">{stats?.streak_days ?? 0}</p>
-                <p className="text-xs text-gray-500">Streak</p>
+                <p className="text-xs text-gray-500">Chuỗi ngày</p>
               </div>
             </div>
 
@@ -220,12 +217,12 @@ export default function Home() {
                 <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
                 <div>
                   <p className="text-sm font-semibold text-gray-900">
-                    {weakArea ? `Work on ${weakArea.replace(/_/g, " ")}` : "Start a measured session"}
+                    {weakArea ? `Cần luyện thêm ${focusLabel(weakArea)}` : "Bắt đầu một phiên học có đo lường"}
                   </p>
                   <p className="mt-1 text-sm text-gray-500">
                     {weakArea
-                      ? "Create a quiz from recent mistakes after speaking."
-                      : "One conversation gives the app enough data for review and quiz practice."}
+                      ? "Sau khi luyện nói, hãy tạo quiz từ các lỗi gần đây."
+                      : "Một cuộc trò chuyện sẽ tạo dữ liệu cho phần ôn lỗi và quiz."}
                   </p>
                 </div>
               </div>
@@ -238,8 +235,8 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <BookOpen className="h-5 w-5 text-blue-700" />
               <div>
-                <h2 className="font-semibold text-gray-900">Level</h2>
-                <p className="text-sm text-gray-500">Used by tutor and quiz generation</p>
+                <h2 className="font-semibold text-gray-900">Trình độ</h2>
+                <p className="text-sm text-gray-500">Dùng cho gia sư và tạo quiz</p>
               </div>
             </div>
 
@@ -265,11 +262,11 @@ export default function Home() {
           <Card>
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <h2 className="font-semibold text-gray-900">Conversation topic</h2>
-                <p className="mt-1 text-sm text-gray-500">Pick a focused context before entering the tutor room.</p>
+                <h2 className="font-semibold text-gray-900">Chủ đề trò chuyện</h2>
+                <p className="mt-1 text-sm text-gray-500">Chọn ngữ cảnh trước khi vào phòng luyện nói.</p>
               </div>
               <Link to="/practice" className="btn-primary inline-flex items-center justify-center gap-2">
-                Start practice
+                Bắt đầu luyện nói
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>

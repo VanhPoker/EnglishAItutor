@@ -24,6 +24,7 @@ import {
   type QuizCreateRequest,
   type QuizListItem,
 } from "../lib/api";
+import { questionTypeLabel, quizSourceLabel, topicLabel } from "../lib/labels";
 import { useUserStore } from "../stores/userStore";
 
 const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -53,12 +54,8 @@ function emptyManualQuestion(index: number): ManualQuestion {
   };
 }
 
-function formatTopic(value: string) {
-  return value.replace(/_/g, " ");
-}
-
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString(undefined, {
+  return new Date(value).toLocaleDateString("vi-VN", {
     month: "short",
     day: "numeric",
   });
@@ -80,12 +77,12 @@ export default function QuizStudio() {
   const [questionCount, setQuestionCount] = useState(5);
   const [focus, setFocus] = useState("");
 
-  const [manualTitle, setManualTitle] = useState("Targeted English quiz");
+  const [manualTitle, setManualTitle] = useState("Bài quiz tiếng Anh theo mục tiêu");
   const [manualQuestions, setManualQuestions] = useState<ManualQuestion[]>([
     emptyManualQuestion(1),
   ]);
 
-  const topicLabel = useMemo(() => formatTopic(topic), [topic]);
+  const currentTopicLabel = useMemo(() => topicLabel(topic), [topic]);
   const latestAttemptScore = quizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
 
   const loadQuizzes = async () => {
@@ -93,7 +90,7 @@ export default function QuizStudio() {
     try {
       setQuizzes(await getQuizzes());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load quizzes");
+      setError(err instanceof Error ? err.message : "Không tải được danh sách quiz");
     } finally {
       setLoading(false);
     }
@@ -117,7 +114,7 @@ export default function QuizStudio() {
       await loadQuizzes();
       navigate(`/quizzes/${quiz.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate quiz");
+      setError(err instanceof Error ? err.message : "Không tạo được quiz");
     } finally {
       setGenerating(false);
     }
@@ -161,7 +158,7 @@ export default function QuizStudio() {
       .filter((question) => question.prompt && question.correct_answer);
 
     if (!cleaned.length) {
-      setError("Add at least one complete manual question.");
+      setError("Hãy thêm ít nhất một câu hỏi đầy đủ.");
       return;
     }
 
@@ -169,7 +166,7 @@ export default function QuizStudio() {
     setError("");
     try {
       const quiz = await createQuiz({
-        title: manualTitle.trim() || "Targeted English quiz",
+        title: manualTitle.trim() || "Bài quiz tiếng Anh theo mục tiêu",
         topic,
         level,
         source: "manual",
@@ -178,7 +175,7 @@ export default function QuizStudio() {
       await loadQuizzes();
       navigate(`/quizzes/${quiz.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save quiz");
+      setError(err instanceof Error ? err.message : "Không lưu được quiz");
     } finally {
       setSavingManual(false);
     }
@@ -190,10 +187,10 @@ export default function QuizStudio() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-blue-700">Quiz Studio</p>
-              <h1 className="mt-1 text-3xl font-bold text-gray-900">Practice from mistakes</h1>
+              <p className="text-sm font-semibold text-blue-700">Tạo bài quiz</p>
+              <h1 className="mt-1 text-3xl font-bold text-gray-900">Luyện tập từ lỗi sai</h1>
               <p className="mt-2 max-w-2xl text-sm text-gray-600">
-                Generate short drills from conversation errors, or build a controlled quiz for demo scenarios.
+                Tạo bài luyện ngắn từ lỗi trong cuộc trò chuyện, hoặc tự tạo bộ câu hỏi để demo.
               </p>
             </div>
             <button
@@ -202,7 +199,7 @@ export default function QuizStudio() {
               className="btn-secondary inline-flex items-center justify-center gap-2"
             >
               <RefreshCw className="h-4 w-4" />
-              Refresh
+              Tải lại
             </button>
           </div>
         </motion.div>
@@ -218,15 +215,15 @@ export default function QuizStudio() {
             <Card>
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Saved quizzes</p>
+                  <p className="text-sm text-gray-500">Quiz đã lưu</p>
                   <p className="mt-1 text-2xl font-bold text-gray-900">{quizzes.length}</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Current level</p>
+                  <p className="text-sm text-gray-500">Trình độ hiện tại</p>
                   <p className="mt-1 text-2xl font-bold text-gray-900">{level}</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Latest score</p>
+                  <p className="text-sm text-gray-500">Điểm gần nhất</p>
                   <p className="mt-1 text-2xl font-bold text-gray-900">
                     {latestAttemptScore == null ? "N/A" : `${latestAttemptScore}%`}
                   </p>
@@ -237,25 +234,25 @@ export default function QuizStudio() {
             <Card>
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="font-semibold text-gray-900">Quiz library</h2>
+                  <h2 className="font-semibold text-gray-900">Thư viện quiz</h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    Current focus: {level} · {topicLabel}
+                    Trọng tâm hiện tại: {level} · {currentTopicLabel}
                   </p>
                 </div>
-                <Badge variant="info">{quizzes.length} total</Badge>
+                <Badge variant="info">{quizzes.length} bài</Badge>
               </div>
 
               {loading ? (
                 <div className="flex items-center gap-3 py-10 text-sm text-gray-500">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading quizzes...
+                  Đang tải quiz...
                 </div>
               ) : quizzes.length === 0 ? (
                 <div className="mt-6 rounded-lg border border-dashed border-gray-300 p-8 text-center">
                   <ClipboardList className="mx-auto h-8 w-8 text-gray-400" />
-                  <h3 className="mt-3 font-semibold text-gray-900">No quiz yet</h3>
+                  <h3 className="mt-3 font-semibold text-gray-900">Chưa có quiz</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    Generate one from mistakes after a tutor session, or create a manual set.
+                    Tạo quiz từ lỗi sai sau phiên học, hoặc tự tạo bộ câu hỏi.
                   </p>
                 </div>
               ) : (
@@ -269,7 +266,7 @@ export default function QuizStudio() {
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold text-gray-900">{quiz.title}</h3>
                           <Badge variant={quiz.source === "mistakes" ? "warning" : "info"}>
-                            {quiz.source}
+                            {quizSourceLabel(quiz.source)}
                           </Badge>
                           {quiz.latest_score != null && (
                             <Badge variant={quiz.latest_score >= 70 ? "success" : "error"}>
@@ -278,14 +275,14 @@ export default function QuizStudio() {
                           )}
                         </div>
                         <p className="mt-1 text-sm text-gray-500">
-                          {quiz.level} · {formatTopic(quiz.topic)} · {quiz.question_count} questions · {formatDate(quiz.created_at)}
+                          {quiz.level} · {topicLabel(quiz.topic)} · {quiz.question_count} câu · {formatDate(quiz.created_at)}
                         </p>
                       </div>
                       <Link
                         to={`/quizzes/${quiz.id}`}
                         className="btn-secondary inline-flex items-center justify-center gap-2"
                       >
-                        Do quiz
+                        Làm quiz
                         <ArrowRight className="h-4 w-4" />
                       </Link>
                     </div>
@@ -302,15 +299,15 @@ export default function QuizStudio() {
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-gray-900">Create practice</h2>
-                  <p className="text-sm text-gray-500">Short and focused beats broad chat.</p>
+                  <h2 className="font-semibold text-gray-900">Tạo bài luyện</h2>
+                  <p className="text-sm text-gray-500">Ngắn, rõ trọng tâm, dễ đo kết quả.</p>
                 </div>
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1">
                 {[
-                  { value: "generate", label: "Generate" },
-                  { value: "manual", label: "Manual" },
+                  { value: "generate", label: "Tạo bằng AI" },
+                  { value: "manual", label: "Tự tạo" },
                 ].map((item) => (
                   <button
                     key={item.value}
@@ -327,7 +324,7 @@ export default function QuizStudio() {
 
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <label>
-                  <span className="field-label">Level</span>
+                  <span className="field-label">Trình độ</span>
                   <select value={level} onChange={(event) => setLevel(event.target.value)} className="field">
                     {LEVELS.map((item) => (
                       <option key={item} value={item}>
@@ -337,7 +334,7 @@ export default function QuizStudio() {
                   </select>
                 </label>
                 <label>
-                  <span className="field-label">Questions</span>
+                  <span className="field-label">Số câu</span>
                   <input
                     type="number"
                     min={3}
@@ -350,11 +347,11 @@ export default function QuizStudio() {
               </div>
 
               <label className="mt-4 block">
-                <span className="field-label">Topic</span>
+                <span className="field-label">Chủ đề</span>
                 <select value={topic} onChange={(event) => setTopic(event.target.value)} className="field capitalize">
                   {TOPICS.map((item) => (
                     <option key={item} value={item}>
-                      {formatTopic(item)}
+                      {topicLabel(item)}
                     </option>
                   ))}
                 </select>
@@ -363,11 +360,11 @@ export default function QuizStudio() {
               {mode === "generate" ? (
                 <div className="mt-5 space-y-4">
                   <div>
-                    <span className="field-label">Source</span>
+                    <span className="field-label">Nguồn tạo</span>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { value: "mistakes", label: "Mistakes", icon: Brain },
-                        { value: "topic", label: "Topic", icon: BookOpenCheck },
+                        { value: "mistakes", label: "Từ lỗi sai", icon: Brain },
+                        { value: "topic", label: "Theo chủ đề", icon: BookOpenCheck },
                       ].map((item) => (
                         <button
                           key={item.value}
@@ -387,11 +384,11 @@ export default function QuizStudio() {
                   </div>
 
                   <label className="block">
-                    <span className="field-label">Extra focus</span>
+                    <span className="field-label">Trọng tâm thêm</span>
                     <textarea
                       value={focus}
                       onChange={(event) => setFocus(event.target.value)}
-                      placeholder="Past tense, polite requests, interview answers..."
+                      placeholder="Thì quá khứ, cách nói lịch sự, trả lời phỏng vấn..."
                       className="field min-h-24 resize-none"
                     />
                   </label>
@@ -403,13 +400,13 @@ export default function QuizStudio() {
                     className="btn-primary inline-flex w-full items-center justify-center gap-2"
                   >
                     {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    Generate quiz
+                    Tạo quiz
                   </button>
                 </div>
               ) : (
                 <div className="mt-5 space-y-4">
                   <label className="block">
-                    <span className="field-label">Title</span>
+                    <span className="field-label">Tiêu đề</span>
                     <input
                       value={manualTitle}
                       onChange={(event) => setManualTitle(event.target.value)}
@@ -421,7 +418,7 @@ export default function QuizStudio() {
                     {manualQuestions.map((question, index) => (
                       <div key={question.id} className="rounded-lg border border-gray-200 bg-white p-4">
                         <div className="mb-3 flex items-center justify-between gap-3">
-                          <Badge variant="info">Question {index + 1}</Badge>
+                          <Badge variant="info">Câu {index + 1}</Badge>
                           <div className="flex items-center gap-2">
                             <select
                               value={question.type}
@@ -433,14 +430,14 @@ export default function QuizStudio() {
                               }
                               className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
                             >
-                              <option value="multiple_choice">Multiple choice</option>
-                              <option value="fill_blank">Fill blank</option>
+                              <option value="multiple_choice">{questionTypeLabel("multiple_choice")}</option>
+                              <option value="fill_blank">{questionTypeLabel("fill_blank")}</option>
                             </select>
                             <button
                               type="button"
                               onClick={() => removeManualQuestion(index)}
                               className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                              aria-label="Remove question"
+                              aria-label="Xoá câu hỏi"
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -450,7 +447,7 @@ export default function QuizStudio() {
                         <input
                           value={question.prompt}
                           onChange={(event) => updateManualQuestion(index, { prompt: event.target.value })}
-                          placeholder="Question prompt"
+                          placeholder="Nội dung câu hỏi"
                           className="field"
                         />
 
@@ -461,7 +458,7 @@ export default function QuizStudio() {
                                 key={optionIndex}
                                 value={option}
                                 onChange={(event) => updateOption(index, optionIndex, event.target.value)}
-                                placeholder={`Option ${optionIndex + 1}`}
+                                placeholder={`Lựa chọn ${optionIndex + 1}`}
                                 className="field"
                               />
                             ))}
@@ -471,13 +468,13 @@ export default function QuizStudio() {
                         <input
                           value={question.correct_answer}
                           onChange={(event) => updateManualQuestion(index, { correct_answer: event.target.value })}
-                          placeholder="Correct answer"
+                          placeholder="Đáp án đúng"
                           className="field mt-2"
                         />
                         <input
                           value={question.explanation}
                           onChange={(event) => updateManualQuestion(index, { explanation: event.target.value })}
-                          placeholder="Short explanation"
+                          placeholder="Giải thích ngắn"
                           className="field mt-2"
                         />
                       </div>
@@ -491,7 +488,7 @@ export default function QuizStudio() {
                       className="btn-secondary inline-flex items-center gap-2"
                     >
                       <Plus className="h-4 w-4" />
-                      Add
+                      Thêm câu
                     </button>
                     <button
                       type="button"
@@ -500,7 +497,7 @@ export default function QuizStudio() {
                       className="btn-primary inline-flex flex-1 items-center justify-center gap-2"
                     >
                       {savingManual ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Save quiz
+                      Lưu quiz
                     </button>
                   </div>
                 </div>
@@ -511,9 +508,9 @@ export default function QuizStudio() {
               <div className="flex gap-3">
                 <FilePlus2 className="mt-0.5 h-5 w-5 text-blue-700" />
                 <div>
-                  <p className="text-sm font-semibold text-blue-900">Demo-safe flow</p>
+                  <p className="text-sm font-semibold text-blue-900">Luồng demo an toàn</p>
                   <p className="mt-1 text-sm text-blue-800">
-                    Conversation creates mistakes. Quiz turns those mistakes into measurable practice.
+                    Trò chuyện tạo ra lỗi thật. Quiz biến lỗi đó thành bài luyện có điểm số.
                   </p>
                 </div>
               </div>

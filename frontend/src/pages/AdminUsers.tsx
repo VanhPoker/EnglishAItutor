@@ -5,6 +5,7 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import { getAdminUsers, updateAdminUser, type AdminUser } from "../lib/api";
+import { roleLabel } from "../lib/labels";
 import { useAuthStore } from "../stores/authStore";
 
 type UserDraft = Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role">;
@@ -22,8 +23,8 @@ function createDraft(user: AdminUser): UserDraft {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return "Never";
-  return new Date(value).toLocaleString();
+  if (!value) return "Chưa có";
+  return new Date(value).toLocaleString("vi-VN");
 }
 
 function isDirty(user: AdminUser, draft: UserDraft | undefined): boolean {
@@ -61,7 +62,7 @@ export default function AdminUsers() {
         Object.fromEntries(response.users.map((user) => [user.id, createDraft(user)]))
       );
     } catch (err: any) {
-      setError(err.message || "Failed to load users");
+      setError(err.message || "Không tải được danh sách người dùng");
     } finally {
       setLoading(false);
     }
@@ -117,7 +118,7 @@ export default function AdminUsers() {
         });
       }
     } catch (err: any) {
-      setError(err.message || "Failed to update user");
+      setError(err.message || "Không cập nhật được người dùng");
     } finally {
       setSavingId(null);
     }
@@ -131,9 +132,9 @@ export default function AdminUsers() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Quản lý người dùng</h1>
           <p className="text-gray-500 mt-1">
-            Review accounts, adjust levels, and control admin access.
+            Xem tài khoản, chỉnh trình độ và phân quyền quản trị.
           </p>
         </motion.div>
 
@@ -145,7 +146,7 @@ export default function AdminUsers() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{total}</p>
-                <p className="text-sm text-gray-500">Matching users</p>
+                <p className="text-sm text-gray-500">Người dùng phù hợp</p>
               </div>
             </div>
           </Card>
@@ -157,7 +158,7 @@ export default function AdminUsers() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{summary.admins}</p>
-                <p className="text-sm text-gray-500">Admins in view</p>
+                <p className="text-sm text-gray-500">Quản trị viên</p>
               </div>
             </div>
           </Card>
@@ -169,7 +170,7 @@ export default function AdminUsers() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{summary.learners}</p>
-                <p className="text-sm text-gray-500">Learners in view</p>
+                <p className="text-sm text-gray-500">Học viên</p>
               </div>
             </div>
           </Card>
@@ -181,7 +182,7 @@ export default function AdminUsers() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-gray-900">{summary.totalMinutes}</p>
-                <p className="text-sm text-gray-500">Tracked minutes</p>
+                <p className="text-sm text-gray-500">Phút đã học</p>
               </div>
             </div>
           </Card>
@@ -196,35 +197,35 @@ export default function AdminUsers() {
             }}
           >
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tìm kiếm</label>
               <div className="relative">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Search by name or email"
+                  placeholder="Tìm theo tên hoặc email"
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition"
                 />
               </div>
             </div>
 
             <div className="md:w-48">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vai trò</label>
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value as "all" | "learner" | "admin")}
                 className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition bg-white"
               >
-                <option value="all">All roles</option>
-                <option value="admin">Admins</option>
-                <option value="learner">Learners</option>
+                <option value="all">Tất cả vai trò</option>
+                <option value="admin">Quản trị</option>
+                <option value="learner">Học viên</option>
               </select>
             </div>
 
             <div className="flex gap-2">
               <Button type="submit" icon={<Search className="w-4 h-4" />}>
-                Search
+                Tìm kiếm
               </Button>
               <Button
                 type="button"
@@ -232,7 +233,7 @@ export default function AdminUsers() {
                 icon={<RefreshCw className="w-4 h-4" />}
                 onClick={() => void loadUsers()}
               >
-                Reload
+                Tải lại
               </Button>
             </div>
           </form>
@@ -241,8 +242,8 @@ export default function AdminUsers() {
         <Card>
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Users</h2>
-              <p className="text-sm text-gray-500">Showing {users.length} of {total} users</p>
+              <h2 className="text-lg font-semibold text-gray-900">Người dùng</h2>
+              <p className="text-sm text-gray-500">Đang hiển thị {users.length}/{total} người dùng</p>
             </div>
           </div>
 
@@ -257,7 +258,7 @@ export default function AdminUsers() {
               <div className="w-8 h-8 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : users.length === 0 ? (
-            <p className="text-sm text-gray-400 py-8">No users matched your filters.</p>
+            <p className="text-sm text-gray-400 py-8">Không có người dùng phù hợp bộ lọc.</p>
           ) : (
             <div className="divide-y divide-gray-100">
               {users.map((user, index) => {
@@ -284,14 +285,14 @@ export default function AdminUsers() {
                                 : "bg-blue-50 text-blue-700"
                             }`}
                           >
-                            {user.role}
+                            {roleLabel(user.role)}
                           </span>
                           <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                             {user.cefr_level}
                           </span>
                           {isSelf && (
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
-                              You
+                              Bạn
                             </span>
                           )}
                         </div>
@@ -299,18 +300,18 @@ export default function AdminUsers() {
                         <p className="text-sm text-gray-500 mt-1 break-all">{user.email}</p>
 
                         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                          <span>Language: {user.native_language}</span>
-                          <span>Sessions: {user.session_count}</span>
-                          <span>Minutes: {Math.round(user.total_minutes)}</span>
-                          <span>Joined: {formatDate(user.created_at)}</span>
-                          <span>Last session: {formatDate(user.last_session_at)}</span>
+                          <span>Ngôn ngữ: {user.native_language}</span>
+                          <span>Phiên học: {user.session_count}</span>
+                          <span>Phút học: {Math.round(user.total_minutes)}</span>
+                          <span>Ngày tạo: {formatDate(user.created_at)}</span>
+                          <span>Phiên gần nhất: {formatDate(user.last_session_at)}</span>
                         </div>
                       </div>
 
                       <div className="xl:w-[540px]">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Họ tên</label>
                             <input
                               type="text"
                               value={draft?.name || ""}
@@ -322,7 +323,7 @@ export default function AdminUsers() {
                           </div>
 
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Language</label>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Ngôn ngữ</label>
                             <input
                               type="text"
                               value={draft?.native_language || ""}
@@ -334,7 +335,7 @@ export default function AdminUsers() {
                           </div>
 
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">CEFR Level</label>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Trình độ CEFR</label>
                             <select
                               value={draft?.cefr_level || user.cefr_level}
                               onChange={(e) =>
@@ -351,7 +352,7 @@ export default function AdminUsers() {
                           </div>
 
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Role</label>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Vai trò</label>
                             <select
                               value={draft?.role || user.role}
                               onChange={(e) =>
@@ -364,13 +365,13 @@ export default function AdminUsers() {
                             >
                               {roles.map((role) => (
                                 <option key={role} value={role}>
-                                  {role}
+                                  {roleLabel(role)}
                                 </option>
                               ))}
                             </select>
                             {isSelf && (
                               <p className="mt-1 text-[11px] text-gray-400">
-                                You cannot remove your own admin role here.
+                                Bạn không thể tự gỡ quyền quản trị của chính mình tại đây.
                               </p>
                             )}
                           </div>
@@ -389,7 +390,7 @@ export default function AdminUsers() {
                             }
                             disabled={!dirty || savingId === user.id}
                           >
-                            Reset
+                            Hoàn tác
                           </Button>
                           <Button
                             size="sm"
@@ -398,7 +399,7 @@ export default function AdminUsers() {
                             loading={savingId === user.id}
                             disabled={!dirty}
                           >
-                            Save
+                            Lưu
                           </Button>
                         </div>
                       </div>

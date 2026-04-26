@@ -14,6 +14,7 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import ScoreDisplay from "../components/feedback/ScoreDisplay";
 import { getDashboard, type DashboardStats } from "../lib/api";
+import { focusLabel, topicLabel } from "../lib/labels";
 import { useAuthStore } from "../stores/authStore";
 
 export default function Dashboard() {
@@ -60,20 +61,20 @@ export default function Dashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h1 className="text-2xl font-bold text-gray-900">Your Progress</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Tiến độ học tập</h1>
           <p className="text-gray-500 mt-1">
-            Level: <span className="font-semibold text-primary-600">{user?.cefr_level || "B1"}</span> | Keep practicing to level up!
+            Trình độ: <span className="font-semibold text-primary-600">{user?.cefr_level || "B1"}</span> | Luyện đều để lên cấp.
           </p>
         </motion.div>
 
         {/* Stats grid */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[
-            { icon: MessageSquare, label: "Sessions", value: s.total_sessions, color: "text-blue-500 bg-blue-50" },
-            { icon: Clock, label: "Minutes", value: Math.round(s.total_minutes), color: "text-purple-500 bg-purple-50" },
-            { icon: Target, label: "Total Turns", value: s.total_turns, color: "text-green-500 bg-green-50" },
-            { icon: TrendingUp, label: "Errors Fixed", value: s.total_errors, color: "text-amber-500 bg-amber-50" },
-            { icon: Award, label: "Day Streak", value: `${s.streak_days} days`, color: "text-red-500 bg-red-50" },
+            { icon: MessageSquare, label: "Phiên học", value: s.total_sessions, color: "text-blue-500 bg-blue-50" },
+            { icon: Clock, label: "Phút học", value: Math.round(s.total_minutes), color: "text-purple-500 bg-purple-50" },
+            { icon: Target, label: "Lượt trao đổi", value: s.total_turns, color: "text-green-500 bg-green-50" },
+            { icon: TrendingUp, label: "Lỗi đã ghi", value: s.total_errors, color: "text-amber-500 bg-amber-50" },
+            { icon: Award, label: "Chuỗi ngày", value: `${s.streak_days} ngày`, color: "text-red-500 bg-red-50" },
           ].map((stat, i) => (
             <motion.div
               key={stat.label}
@@ -95,20 +96,20 @@ export default function Dashboard() {
         <div className="grid md:grid-cols-2 gap-6 mb-8">
           {/* Score circles */}
           <Card>
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Skill Scores</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">Điểm kỹ năng</h2>
             <div className="flex justify-around">
-              <ScoreDisplay label="Grammar" score={s.avg_grammar ?? 0} />
-              <ScoreDisplay label="Vocab" score={s.avg_vocabulary ?? 0} />
-              <ScoreDisplay label="Fluency" score={s.avg_fluency ?? 0} />
+              <ScoreDisplay label="Ngữ pháp" score={s.avg_grammar ?? 0} />
+              <ScoreDisplay label="Từ vựng" score={s.avg_vocabulary ?? 0} />
+              <ScoreDisplay label="Trôi chảy" score={s.avg_fluency ?? 0} />
             </div>
           </Card>
 
           {/* Common errors */}
           <Card>
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Top Areas to Improve</h2>
+            <h2 className="text-sm font-semibold text-gray-700 mb-4">Điểm cần cải thiện</h2>
             <div className="space-y-3">
               {s.common_errors.length === 0 ? (
-                <p className="text-sm text-gray-400">No errors logged yet. Start practicing!</p>
+                <p className="text-sm text-gray-400">Chưa ghi nhận lỗi nào. Hãy bắt đầu luyện nói.</p>
               ) : (
                 s.common_errors.map((err, i) => (
                   <div key={i} className="flex items-center justify-between">
@@ -118,7 +119,7 @@ export default function Dashboard() {
                           err.type === "grammar" ? "bg-red-400" : "bg-amber-400"
                         }`}
                       />
-                      <span className="text-sm text-gray-700 capitalize">{err.type}</span>
+                      <span className="text-sm text-gray-700">{focusLabel(err.type)}</span>
                     </div>
                     <span className="text-xs text-gray-400">{err.count}x</span>
                   </div>
@@ -132,11 +133,11 @@ export default function Dashboard() {
         <Card>
           <h2 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
             <Calendar className="w-4 h-4 text-gray-400" />
-            Recent Sessions
+            Phiên học gần đây
           </h2>
           <div className="space-y-2">
             {s.recent_sessions.length === 0 ? (
-              <p className="text-sm text-gray-400">No sessions yet. Start your first practice!</p>
+              <p className="text-sm text-gray-400">Chưa có phiên học nào. Hãy bắt đầu phiên đầu tiên.</p>
             ) : (
               s.recent_sessions.map((session, i) => (
                 <motion.div
@@ -151,12 +152,12 @@ export default function Dashboard() {
                       {new Date(session.started_at).toLocaleDateString()}
                     </span>
                     <span className="text-sm text-gray-700 capitalize">
-                      {session.topic.replace(/_/g, " ")}
+                      {topicLabel(session.topic)}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-gray-400">
-                      {Math.round(session.duration_minutes)} min
+                      {Math.round(session.duration_minutes)} phút
                     </span>
                     {session.grammar_score != null && (
                       <span
@@ -175,7 +176,7 @@ export default function Dashboard() {
                       to={`/review/${session.id}`}
                       className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700"
                     >
-                      Review
+                      Ôn lỗi
                       <ArrowRight className="w-3 h-3" />
                     </Link>
                   </div>

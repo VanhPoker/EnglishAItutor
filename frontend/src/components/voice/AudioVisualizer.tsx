@@ -26,7 +26,7 @@ export default function AudioVisualizer({ isActive }: AudioVisualizerProps) {
           style={{ minHeight: 4 }}
         />
       ))}
-      <span className="ml-3 text-xs text-primary-500 font-medium">Listening...</span>
+      <span className="ml-3 text-xs text-primary-500 font-medium">Đang nghe...</span>
     </div>
   );
 }

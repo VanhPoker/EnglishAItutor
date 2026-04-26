@@ -15,8 +15,8 @@ export default function MessageList() {
     return (
       <div className="flex-1 flex items-center justify-center text-gray-400">
         <div className="text-center">
-          <p className="text-lg">Start a conversation!</p>
-          <p className="text-sm mt-1">Type a message or use your microphone</p>
+          <p className="text-lg">Bắt đầu trò chuyện</p>
+          <p className="text-sm mt-1">Nhập tin nhắn hoặc dùng micro</p>
         </div>
       </div>
     );

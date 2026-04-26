@@ -18,7 +18,7 @@ export default function VocabHighlight({ items }: VocabHighlightProps) {
     <div className="space-y-2">
       <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600">
         <Lightbulb className="w-3.5 h-3.5" />
-        <span>New Vocabulary</span>
+        <span>Từ vựng mới</span>
       </div>
       {items.map((item, i) => (
         <motion.div
