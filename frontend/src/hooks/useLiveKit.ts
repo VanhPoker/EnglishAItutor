@@ -70,9 +70,6 @@ function getLiveKitUrl() {
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  if (["127.0.0.1", "localhost"].includes(window.location.hostname)) {
-    return `${protocol}//4.145.98.216:7880`;
-  }
   return `${protocol}//${window.location.hostname}:7880`;
 }
 
