@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, RefreshCw, ShieldCheck, UserCheck, Users } from "lucide-react";
+import { ArrowRight, ListChecks, RefreshCw, ShieldCheck, UserCheck, Users } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -126,24 +126,44 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-          <Card>
-            <div className="flex h-full flex-col justify-between gap-5">
-              <div>
-                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
-                  <Users className="h-5 w-5" />
+        <div className="mt-6 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="grid gap-4">
+            <Card>
+              <div className="flex h-full flex-col justify-between gap-5">
+                <div>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
+                    <ListChecks className="h-5 w-5" />
+                  </div>
+                  <h2 className="mt-4 text-lg font-semibold text-gray-900">Quản lý kho quiz</h2>
+                  <p className="mt-2 text-sm text-gray-500">
+                    Tạo quiz bằng AI, import file, lấy nguồn mở và xoá các bộ đề không còn dùng.
+                  </p>
                 </div>
-                <h2 className="mt-4 text-lg font-semibold text-gray-900">Quản lý người dùng</h2>
-                <p className="mt-2 text-sm text-gray-500">
-                  Tìm kiếm tài khoản, đổi trình độ CEFR và cấp hoặc gỡ quyền quản trị.
-                </p>
+                <Link to="/admin/quizzes" className="btn-primary inline-flex items-center justify-center gap-2">
+                  Mở kho quiz
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
               </div>
-              <Link to="/admin/users" className="btn-primary inline-flex items-center justify-center gap-2">
-                Mở danh sách người dùng
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </Card>
+            </Card>
+
+            <Card>
+              <div className="flex h-full flex-col justify-between gap-5">
+                <div>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-gray-100 text-gray-700">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <h2 className="mt-4 text-lg font-semibold text-gray-900">Quản lý người dùng</h2>
+                  <p className="mt-2 text-sm text-gray-500">
+                    Tìm kiếm tài khoản, đổi trình độ CEFR và cấp hoặc gỡ quyền quản trị.
+                  </p>
+                </div>
+                <Link to="/admin/users" className="btn-secondary inline-flex items-center justify-center gap-2">
+                  Mở danh sách người dùng
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </Card>
+          </div>
 
           <Card>
             <div className="flex items-center justify-between gap-4">

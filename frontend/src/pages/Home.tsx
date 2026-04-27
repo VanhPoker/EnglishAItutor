@@ -160,7 +160,7 @@ export default function Home() {
                 },
                 {
                   title: "Làm bài quiz",
-                  body: weakArea ? `Tập trung vào lỗi ${focusLabel(weakArea)}.` : "Tạo câu hỏi từ chủ đề hoặc lỗi sai.",
+                  body: weakArea ? `Tập trung vào lỗi ${focusLabel(weakArea)}.` : "Chọn bài có sẵn trong kho đề.",
                   icon: ClipboardList,
                   action: "Mở bài quiz",
                   to: "/quizzes",
@@ -221,7 +221,7 @@ export default function Home() {
                   </p>
                   <p className="mt-1 text-sm text-gray-500">
                     {weakArea
-                      ? "Sau khi luyện nói, hãy tạo quiz từ các lỗi gần đây."
+                      ? "Sau khi luyện nói, hãy chọn quiz phù hợp để kiểm tra lại."
                       : "Một cuộc trò chuyện sẽ tạo dữ liệu cho phần ôn lỗi và quiz."}
                   </p>
                 </div>
@@ -236,7 +236,7 @@ export default function Home() {
               <BookOpen className="h-5 w-5 text-blue-700" />
               <div>
                 <h2 className="font-semibold text-gray-900">Trình độ</h2>
-                <p className="text-sm text-gray-500">Dùng cho gia sư và tạo quiz</p>
+                <p className="text-sm text-gray-500">Dùng cho gia sư và gợi ý bài luyện</p>
               </div>
             </div>
 

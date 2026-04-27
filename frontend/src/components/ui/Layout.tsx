@@ -33,6 +33,7 @@ const learnerItems = [
 
 const adminItems = [
   { path: "/admin", label: "Tổng quan", icon: ShieldCheck, matches: ["/admin"] },
+  { path: "/admin/quizzes", label: "Kho quiz", icon: ListChecks, matches: ["/admin/quizzes"] },
   { path: "/admin/users", label: "Người dùng", icon: Users, matches: ["/admin/users"] },
 ];
 

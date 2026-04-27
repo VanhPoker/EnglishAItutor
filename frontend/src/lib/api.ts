@@ -453,6 +453,12 @@ export async function importQuizzesFromSource(
   });
 }
 
+export async function deleteQuiz(quizId: string): Promise<void> {
+  return apiFetch<void>(`${API_BASE}/quizzes/${quizId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function uploadQuizImage(file: File): Promise<QuizImageUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
