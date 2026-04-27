@@ -22,10 +22,12 @@ const focusLabels: Record<string, string> = {
 };
 
 const sourceLabels: Record<string, string> = {
+  ai: "AI theo chủ đề",
   mistakes: "Từ lỗi sai",
   topic: "Theo chủ đề",
   manual: "Tự tạo",
   imported: "Import file",
+  open_source: "Nguồn mở",
 };
 
 const roleLabels: Record<string, string> = {

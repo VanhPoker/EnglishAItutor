@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Download,
   FilePlus2,
+  Globe2,
   Loader2,
   Plus,
   RefreshCw,
@@ -24,10 +25,12 @@ import {
   generateQuiz,
   getQuizzes,
   importQuizzes,
+  importQuizzesFromSource,
   uploadQuizImage,
   type QuizCreateRequest,
   type QuizImportItem,
   type QuizListItem,
+  type QuizSourcePreset,
 } from "../lib/api";
 import { questionTypeLabel, quizSourceLabel, topicLabel } from "../lib/labels";
 import { useUserStore } from "../stores/userStore";
@@ -44,8 +47,45 @@ const TOPICS = [
   "health_fitness",
 ];
 
+const SOURCE_PRESETS: Array<{
+  value: QuizSourcePreset;
+  label: string;
+  description: string;
+  url?: string;
+}> = [
+  {
+    value: "cefr_core",
+    label: "CEFR",
+    description: "Sinh bài theo năng lực A1-C2, hợp để chứng minh độ khó có chuẩn.",
+    url: "coe.int",
+  },
+  {
+    value: "wikibooks_grammar",
+    label: "Wikibooks Grammar",
+    description: "Lấy ngữ cảnh ngữ pháp mở để tạo câu hỏi grammar và cấu trúc câu.",
+    url: "en.wikibooks.org",
+  },
+  {
+    value: "tatoeba_sentences",
+    label: "Tatoeba style",
+    description: "Tạo bài luyện câu ngắn, từ vựng và điền từ theo kiểu corpus câu mở.",
+    url: "tatoeba.org",
+  },
+  {
+    value: "thpt_2025_format",
+    label: "THPT 2025",
+    description: "Tạo câu hỏi theo format đọc hiểu, từ vựng, ngữ pháp kiểu đề tốt nghiệp.",
+    url: "chinhphu.vn",
+  },
+  {
+    value: "custom_url",
+    label: "URL riêng",
+    description: "Dán trang tài liệu công khai để AI tạo quiz từ ngữ cảnh đó.",
+  },
+];
+
 type ManualQuestion = QuizCreateRequest["questions"][number];
-type Mode = "generate" | "manual" | "import";
+type Mode = "generate" | "manual" | "import" | "source";
 
 function emptyManualQuestion(index: number): ManualQuestion {
   return {
@@ -259,6 +299,7 @@ export default function QuizStudio() {
   const [generating, setGenerating] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [sourceImporting, setSourceImporting] = useState(false);
   const [uploadingImageFor, setUploadingImageFor] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -276,8 +317,17 @@ export default function QuizStudio() {
   const [importFileName, setImportFileName] = useState("");
   const [importPreview, setImportPreview] = useState<QuizImportItem[]>([]);
   const [importMessage, setImportMessage] = useState("");
+  const [sourcePreset, setSourcePreset] = useState<QuizSourcePreset>("cefr_core");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceQuizCount, setSourceQuizCount] = useState(3);
+  const [sourceFocus, setSourceFocus] = useState("");
+  const [sourceMessage, setSourceMessage] = useState("");
 
   const currentTopicLabel = useMemo(() => topicLabel(topic), [topic]);
+  const selectedSourcePreset = useMemo(
+    () => SOURCE_PRESETS.find((item) => item.value === sourcePreset) || SOURCE_PRESETS[0],
+    [sourcePreset]
+  );
   const latestAttemptScore = quizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
   const importQuestionCount = importPreview.reduce((sum, item) => sum + item.questions.length, 0);
 
@@ -439,6 +489,36 @@ export default function QuizStudio() {
     }
   };
 
+  const handleSourceImport = async () => {
+    if (sourcePreset === "custom_url" && !sourceUrl.trim()) {
+      setError("Hãy nhập URL nguồn để tạo quiz.");
+      return;
+    }
+
+    setSourceImporting(true);
+    setError("");
+    setSourceMessage("");
+    try {
+      const response = await importQuizzesFromSource({
+        preset: sourcePreset,
+        source_url: sourceUrl.trim() || undefined,
+        topic,
+        level,
+        quiz_count: sourceQuizCount,
+        questions_per_quiz: questionCount,
+        focus: sourceFocus.trim() || undefined,
+      });
+      await loadQuizzes();
+      setSourceMessage(
+        `Đã tạo ${response.imported_count} quiz với ${response.question_count} câu từ ${response.source_title}.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được quiz từ nguồn mở");
+    } finally {
+      setSourceImporting(false);
+    }
+  };
+
   const downloadSampleCsv = () => {
     const sample = [
       "quiz_title,topic,level,type,prompt,image_url,option_a,option_b,option_c,option_d,correct_answer,explanation,focus",
@@ -577,9 +657,10 @@ export default function QuizStudio() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-1">
+              <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 md:grid-cols-4">
                 {[
                   { value: "generate", label: "Tạo bằng AI" },
+                  { value: "source", label: "Nguồn mở" },
                   { value: "manual", label: "Tự tạo" },
                   { value: "import", label: "Import file" },
                 ].map((item) => (
@@ -675,6 +756,99 @@ export default function QuizStudio() {
                   >
                     {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                     Tạo quiz
+                  </button>
+                </div>
+              ) : mode === "source" ? (
+                <div className="mt-5 space-y-4">
+                  <div>
+                    <span className="field-label">Nguồn tham khảo</span>
+                    <div className="space-y-2">
+                      {SOURCE_PRESETS.map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => setSourcePreset(item.value)}
+                          className={`w-full rounded-lg border p-3 text-left transition ${
+                            sourcePreset === item.value
+                              ? "border-blue-300 bg-blue-50 text-blue-900"
+                              : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-semibold">{item.label}</span>
+                            {item.url && <span className="text-xs text-gray-500">{item.url}</span>}
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-gray-500">{item.description}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="field-label">
+                      {sourcePreset === "custom_url" ? "URL nguồn" : "URL tuỳ chọn"}
+                    </span>
+                    <input
+                      value={sourceUrl}
+                      onChange={(event) => setSourceUrl(event.target.value)}
+                      placeholder={
+                        sourcePreset === "custom_url"
+                          ? "https://..."
+                          : `Để trống để dùng nguồn mặc định ${selectedSourcePreset.url || ""}`
+                      }
+                      className="field"
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label>
+                      <span className="field-label">Số bộ quiz</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={sourceQuizCount}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          setSourceQuizCount(Math.min(10, Math.max(1, Number.isFinite(next) ? next : 1)));
+                        }}
+                        className="field"
+                      />
+                    </label>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Tổng câu</p>
+                      <p className="mt-1 text-xl font-bold text-gray-900">{sourceQuizCount * questionCount}</p>
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="field-label">Trọng tâm</span>
+                    <textarea
+                      value={sourceFocus}
+                      onChange={(event) => setSourceFocus(event.target.value)}
+                      placeholder="Ví dụ: đọc hiểu, mệnh đề quan hệ, từ vựng du lịch, dạng đề THPT..."
+                      className="field min-h-24 resize-none"
+                    />
+                  </label>
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    Hệ thống dùng nguồn làm ngữ cảnh và tạo câu hỏi mới, tránh copy nguyên văn đoạn dài. Mỗi quiz sẽ lưu kèm nguồn để dễ giải thích trong báo cáo.
+                  </div>
+
+                  {sourceMessage && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                      {sourceMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={sourceImporting}
+                    onClick={handleSourceImport}
+                    className="btn-primary inline-flex w-full items-center justify-center gap-2"
+                  >
+                    {sourceImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe2 className="h-4 w-4" />}
+                    Tạo từ nguồn mở
                   </button>
                 </div>
               ) : mode === "manual" ? (

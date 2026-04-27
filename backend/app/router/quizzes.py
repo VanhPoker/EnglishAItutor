@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
+from ipaddress import ip_address
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
@@ -24,7 +28,8 @@ from app.database.models import ErrorLog, Quiz, QuizAttempt, User
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
-QuizSource = Literal["ai", "manual", "mistakes", "imported"]
+QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source"]
+QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -32,8 +37,40 @@ ALLOWED_IMAGE_TYPES = {
     "image/gif": ".gif",
 }
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_SOURCE_TEXT_CHARS = 7000
 QUIZ_IMAGE_DIR = Path(__file__).resolve().parents[1] / "uploads" / "quiz-images"
 QUIZ_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+SOURCE_PRESETS = {
+    "cefr_core": {
+        "title": "CEFR A1-C2 Skill Bank",
+        "url": "https://www.coe.int/web/portfolio/self-assessment-grid",
+        "license": "Council of Europe CEFR descriptors; use as alignment reference.",
+        "attribution": "Council of Europe - Common European Framework of Reference for Languages.",
+        "guidance": "Create original English learner questions aligned to CEFR can-do descriptors.",
+    },
+    "wikibooks_grammar": {
+        "title": "Wikibooks English Grammar",
+        "url": "https://en.wikibooks.org/wiki/English_Grammar",
+        "license": "Wikibooks content is generally CC BY-SA; preserve attribution if reused.",
+        "attribution": "Wikibooks contributors - English Grammar.",
+        "guidance": "Create original grammar questions from standard English grammar concepts.",
+    },
+    "tatoeba_sentences": {
+        "title": "Tatoeba Sentence Practice",
+        "url": "https://tatoeba.org/en/downloads",
+        "license": "Tatoeba text exports are CC BY 2.0 FR, with some CC0 subsets.",
+        "attribution": "Tatoeba Project contributors.",
+        "guidance": "Create sentence-level vocabulary, grammar, and fill-blank practice inspired by open sentence corpora.",
+    },
+    "thpt_2025_format": {
+        "title": "THPT 2025 English Format",
+        "url": "https://xaydungchinhsach.chinhphu.vn/cau-truc-dinh-dang-de-thi-tot-nghiep-thpt-tu-nam-2025-11923122912242127.htm",
+        "license": "Use as exam-format reference; generate original questions unless reuse rights are confirmed.",
+        "attribution": "Vietnam Ministry of Education and Training format reference.",
+        "guidance": "Create original multiple-choice questions similar in structure to Vietnam THPT English reading and language-use tasks.",
+    },
+}
 
 
 class QuizQuestion(BaseModel):
@@ -101,6 +138,16 @@ class QuizImportRequest(BaseModel):
     quizzes: list[QuizImportItem] = Field(default_factory=list, max_length=50)
 
 
+class QuizSourceImportRequest(BaseModel):
+    preset: QuizSourcePreset = "cefr_core"
+    source_url: Optional[str] = None
+    topic: str = "free_conversation"
+    level: str = "B1"
+    quiz_count: int = Field(default=3, ge=1, le=10)
+    questions_per_quiz: int = Field(default=5, ge=3, le=10)
+    focus: Optional[str] = None
+
+
 class QuizAnswerSubmit(BaseModel):
     answers: dict[str, str]
 
@@ -132,6 +179,13 @@ class QuizImportResponse(BaseModel):
     imported_count: int
     question_count: int
     quizzes: list[QuizListItem]
+
+
+class QuizSourceImportResponse(QuizImportResponse):
+    source_title: str
+    source_url: Optional[str] = None
+    license: str
+    attribution: str
 
 
 class QuizImageUploadResponse(BaseModel):
@@ -203,6 +257,10 @@ class GeneratedQuiz(BaseModel):
     title: str
     description: str
     questions: list[GeneratedQuizQuestion]
+
+
+class GeneratedQuizBatch(BaseModel):
+    quizzes: list[GeneratedQuiz] = Field(default_factory=list)
 
 
 def _normalize_answer(value: str) -> str:
@@ -362,6 +420,264 @@ async def _recent_error_focus(db, user_id: str) -> str:
         if original and correction:
             lines.append(f"- {item.error_type}: {original} -> {correction}. {explanation}")
     return "\n".join(lines)
+
+
+class _ReadableTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self._chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        cleaned = " ".join(data.split())
+        if len(cleaned) >= 30:
+            self._chunks.append(cleaned)
+
+    def text(self) -> str:
+        return "\n".join(self._chunks)
+
+
+def _safe_source_url(url: str) -> str:
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="URL nguồn phải là http hoặc https hợp lệ.")
+
+    host = parsed.hostname.lower()
+    if host in {"localhost", "0.0.0.0"} or host.endswith(".local"):
+        raise HTTPException(status_code=422, detail="Không hỗ trợ crawl URL nội bộ.")
+    try:
+        ip = ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            raise HTTPException(status_code=422, detail="Không hỗ trợ crawl URL nội bộ.")
+    except ValueError:
+        pass
+    return parsed.geturl()
+
+
+def _extract_source_text(raw: str) -> str:
+    parser = _ReadableTextParser()
+    parser.feed(raw)
+    text = parser.text() or raw
+    text = re.sub(r"\s+", " ", text)
+    return text[:MAX_SOURCE_TEXT_CHARS]
+
+
+async def _fetch_source_text(url: str | None) -> str:
+    if not url:
+        return ""
+    current_url = _safe_source_url(url)
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=False) as client:
+            response = None
+            for _ in range(4):
+                response = await client.get(
+                    current_url,
+                    headers={"User-Agent": "EnglishAItutorQuizCrawler/1.0"},
+                )
+                if response.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                current_url = _safe_source_url(urljoin(current_url, location))
+            if response is None:
+                return ""
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "text" not in content_type and "html" not in content_type and "json" not in content_type:
+                return ""
+            return _extract_source_text(response.text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(f"Could not fetch quiz source {url}: {exc}")
+        return ""
+
+
+def _source_info(req: QuizSourceImportRequest) -> dict:
+    if req.preset == "custom_url":
+        if not req.source_url:
+            raise HTTPException(status_code=422, detail="Hãy nhập URL nguồn cần crawl.")
+        return {
+            "title": "Nguồn tuỳ chỉnh",
+            "url": req.source_url,
+            "license": "Custom source; verify reuse rights before publishing.",
+            "attribution": req.source_url,
+            "guidance": "Create original English learning questions from the provided source text.",
+        }
+
+    preset = SOURCE_PRESETS[req.preset]
+    return {
+        **preset,
+        "url": req.source_url or preset["url"],
+    }
+
+
+def _source_fallback_quizzes(req: QuizSourceImportRequest, info: dict) -> list[QuizImportItem]:
+    topic_display = req.topic.replace("_", " ")
+    focus = (req.focus or "grammar, vocabulary, reading comprehension").strip()
+    templates = [
+        QuizQuestion(
+            id="q1",
+            type="multiple_choice",
+            prompt=f"Choose the most natural {req.level} sentence about {topic_display}.",
+            options=[
+                "I would like to talk about this topic.",
+                "I would like talk about this topic.",
+                "I like to talking about this topic.",
+                "I am like talk about this topic.",
+            ],
+            correct_answer="I would like to talk about this topic.",
+            explanation="Use 'would like to' before the base verb.",
+            focus="grammar",
+        ),
+        QuizQuestion(
+            id="q2",
+            type="fill_blank",
+            prompt="Complete the sentence: This source is useful ___ English practice.",
+            correct_answer="for",
+            explanation="Use 'useful for' before a noun or gerund phrase.",
+            focus="vocabulary",
+        ),
+        QuizQuestion(
+            id="q3",
+            type="multiple_choice",
+            prompt="Which sentence keeps the meaning clear and polite?",
+            options=[
+                "Could you explain the answer again?",
+                "Explain answer again you?",
+                "You can explain answer?",
+                "Again the answer explain?",
+            ],
+            correct_answer="Could you explain the answer again?",
+            explanation="This is a polite request form.",
+            focus="speaking",
+        ),
+        QuizQuestion(
+            id="q4",
+            type="multiple_choice",
+            prompt=f"What should a {req.level} learner do after making a mistake?",
+            options=[
+                "Review the correction and use it in a new sentence.",
+                "Ignore the correction completely.",
+                "Memorize only the answer letter.",
+                "Stop practicing the topic.",
+            ],
+            correct_answer="Review the correction and use it in a new sentence.",
+            explanation="Active reuse helps the learner remember the pattern.",
+            focus="comprehension",
+        ),
+        QuizQuestion(
+            id="q5",
+            type="fill_blank",
+            prompt="Complete: I need more practice ___ this grammar point.",
+            correct_answer="with",
+            explanation="Use 'practice with' for a skill or topic.",
+            focus="word_choice",
+        ),
+    ]
+    quizzes = []
+    for index in range(req.quiz_count):
+        questions = []
+        for q_index in range(1, req.questions_per_quiz + 1):
+            question = templates[(q_index - 1) % len(templates)]
+            data = question.model_dump()
+            data["id"] = f"q{q_index}"
+            if q_index > len(templates):
+                data["prompt"] = f"{data['prompt']} ({q_index})"
+            questions.append(QuizQuestion.model_validate(data))
+        quizzes.append(
+            QuizImportItem(
+                title=f"{info['title']} - {req.level} #{index + 1}",
+                topic=req.topic,
+                level=req.level,
+                description=f"Nguồn: {info['attribution']}. Trọng tâm: {focus}.",
+                questions=questions,
+            )
+        )
+    return quizzes
+
+
+async def _generate_source_quizzes(req: QuizSourceImportRequest, info: dict, source_text: str) -> list[QuizImportItem]:
+    topic_display = req.topic.replace("_", " ")
+    prompt = f"""
+Create a batch of original English learner quizzes for this app.
+
+Source preset: {info['title']}
+Source URL: {info.get('url') or 'not provided'}
+License note: {info['license']}
+Attribution: {info['attribution']}
+Source guidance: {info['guidance']}
+
+Target:
+- CEFR level: {req.level}
+- Topic: {topic_display}
+- Focus: {req.focus or 'balanced grammar, vocabulary, reading comprehension, and practical communication'}
+- Quiz count: {req.quiz_count}
+- Questions per quiz: {req.questions_per_quiz}
+
+Rules:
+- Generate original questions; do not copy long copyrighted passages verbatim.
+- If the source text is open licensed, still keep prompts concise and add attribution in quiz description.
+- Every quiz must contain exactly {req.questions_per_quiz} questions.
+- Use only multiple_choice and fill_blank.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- Keep questions useful for Vietnamese learners of English.
+- Use focus labels like grammar, vocabulary, word_choice, structure, comprehension, speaking.
+
+Source excerpt:
+{source_text or '(No source excerpt available; use preset guidance only.)'}
+
+Return structured data only.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.25).with_structured_output(GeneratedQuizBatch)
+        batch: GeneratedQuizBatch = await llm.ainvoke(
+            [
+                SystemMessage(content="You create reliable, original English learning quizzes with CEFR-aligned difficulty."),
+                HumanMessage(content=prompt),
+            ]
+        )
+        quizzes = []
+        for quiz_index, generated in enumerate(batch.quizzes[: req.quiz_count], start=1):
+            questions = []
+            for question_index, question in enumerate(generated.questions[: req.questions_per_quiz], start=1):
+                data = question.model_dump()
+                data["id"] = data.get("id") or f"q{question_index}"
+                if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                    data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+                questions.append(QuizQuestion.model_validate(data))
+            questions = _normalize_questions(questions)
+            if len(questions) >= req.questions_per_quiz:
+                quizzes.append(
+                    QuizImportItem(
+                        title=generated.title or f"{info['title']} - {req.level} #{quiz_index}",
+                        topic=req.topic,
+                        level=req.level,
+                        description=f"{generated.description}\nNguồn: {info['attribution']}. License: {info['license']}",
+                        questions=questions[: req.questions_per_quiz],
+                    )
+                )
+        if quizzes:
+            if len(quizzes) >= req.quiz_count:
+                return quizzes[: req.quiz_count]
+            fallback = _source_fallback_quizzes(req, info)
+            return (quizzes + fallback[len(quizzes):])[: req.quiz_count]
+    except Exception as exc:
+        logger.warning(f"Source quiz generation failed, using fallback: {exc}")
+
+    return _source_fallback_quizzes(req, info)
 
 
 async def _generate_quiz(req: QuizGenerateRequest, focus_text: str) -> GeneratedQuiz:
@@ -832,6 +1148,73 @@ async def import_quizzes(req: QuizImportRequest, user: User = Depends(get_curren
         imported_count=len(items),
         question_count=total_questions,
         quizzes=items,
+    )
+
+
+@router.post("/source-import", response_model=QuizSourceImportResponse)
+async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = Depends(get_current_user)):
+    info = _source_info(req)
+    source_text = await _fetch_source_text(info.get("url"))
+    generated_items = await _generate_source_quizzes(req, info, source_text)
+
+    imported: list[Quiz] = []
+    total_questions = 0
+    source_note = f"Nguồn: {info['attribution']}. License: {info['license']}"
+    for item in generated_items[: req.quiz_count]:
+        questions = _normalize_questions(item.questions)[: req.questions_per_quiz]
+        if len(questions) < 3:
+            continue
+        total_questions += len(questions)
+        if total_questions > 1000:
+            raise HTTPException(status_code=422, detail="Mỗi lần tạo từ nguồn mở tối đa 1000 câu hỏi.")
+
+        description = (item.description or "").strip()
+        if source_note not in description:
+            description = f"{description}\n{source_note}".strip()
+        imported.append(
+            Quiz(
+                user_id=user.id,
+                title=item.title.strip() or f"{info['title']} - {req.level}",
+                topic=item.topic or req.topic,
+                level=item.level or req.level,
+                source="open_source",
+                description=description,
+                questions_json=[question.model_dump() for question in questions],
+            )
+        )
+
+    if not imported:
+        raise HTTPException(status_code=422, detail="Không tạo được quiz hợp lệ từ nguồn này.")
+
+    factory = get_session_factory()
+    async with factory() as db:
+        for quiz in imported:
+            db.add(quiz)
+        await db.commit()
+        for quiz in imported:
+            await db.refresh(quiz)
+
+    items = [
+        QuizListItem(
+            id=quiz.id,
+            title=quiz.title,
+            topic=quiz.topic,
+            level=quiz.level,
+            source=quiz.source,
+            question_count=len(quiz.questions_json or []),
+            created_at=quiz.created_at,
+            latest_score=None,
+        )
+        for quiz in imported
+    ]
+    return QuizSourceImportResponse(
+        imported_count=len(items),
+        question_count=total_questions,
+        quizzes=items,
+        source_title=info["title"],
+        source_url=info.get("url"),
+        license=info["license"],
+        attribution=info["attribution"],
     )
 
 
