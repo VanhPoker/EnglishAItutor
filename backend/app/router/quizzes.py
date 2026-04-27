@@ -18,19 +18,22 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, desc, select
+from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user, require_role
 from app.core.llm import get_model
 from app.core.settings import settings
 from app.core.subscriptions import assert_quota_available
 from app.database.connection import get_session_factory
-from app.database.models import ErrorLog, Quiz, QuizAttempt, User
+from app.database.models import ErrorLog, Quiz, QuizAttempt, QuizSet, User
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
 QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source"]
 QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
+CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+MAX_LEARNER_LEVEL_DISTANCE = 2
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -149,6 +152,18 @@ class QuizSourceImportRequest(BaseModel):
     focus: Optional[str] = None
 
 
+class QuizSourceSetGenerateRequest(BaseModel):
+    topic: str = "free_conversation"
+    level: str = "B1"
+    presets: list[QuizSourcePreset] = Field(
+        default_factory=lambda: ["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format"],
+        max_length=4,
+    )
+    quiz_count_per_set: int = Field(default=3, ge=1, le=6)
+    questions_per_quiz: int = Field(default=5, ge=3, le=10)
+    focus: Optional[str] = None
+
+
 class QuizAnswerSubmit(BaseModel):
     answers: dict[str, str]
 
@@ -159,6 +174,8 @@ class QuizResponse(BaseModel):
     topic: str
     level: str
     source: str
+    quiz_set_id: Optional[str] = None
+    quiz_set_title: Optional[str] = None
     description: Optional[str]
     question_count: int
     questions: list[QuizQuestionPublic]
@@ -183,9 +200,44 @@ class QuizListItem(BaseModel):
     topic: str
     level: str
     source: str
+    quiz_set_id: Optional[str] = None
+    quiz_set_title: Optional[str] = None
     question_count: int
     created_at: datetime
     latest_score: Optional[int] = None
+    is_locked: bool = False
+    level_distance: int = 0
+
+
+class QuizSetResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    source: str
+    source_preset: Optional[str] = None
+    source_title: Optional[str] = None
+    source_url: Optional[str] = None
+    license: Optional[str] = None
+    attribution: Optional[str] = None
+    topic: str
+    level: str
+    quiz_count: int
+    question_count: int
+    latest_score: Optional[int] = None
+    is_locked: bool = False
+    level_distance: int = 0
+    created_at: datetime
+
+
+class QuizSetDetailResponse(QuizSetResponse):
+    quizzes: list[QuizListItem] = Field(default_factory=list)
+
+
+class QuizSetGenerateResponse(BaseModel):
+    generated_count: int
+    quiz_count: int
+    question_count: int
+    sets: list[QuizSetDetailResponse]
 
 
 class QuizImportResponse(BaseModel):
@@ -280,6 +332,33 @@ def _normalize_answer(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower()).strip(" .!?;:,")
 
 
+def _level_index(level: str | None) -> int:
+    normalized = (level or "B1").strip().upper()
+    return CEFR_LEVELS.index(normalized) if normalized in CEFR_LEVELS else CEFR_LEVELS.index("B1")
+
+
+def _level_distance(left: str | None, right: str | None) -> int:
+    return abs(_level_index(left) - _level_index(right))
+
+
+def _is_level_allowed(user: User, quiz_level: str | None) -> bool:
+    if user.role == "admin":
+        return True
+    return _level_distance(user.cefr_level, quiz_level) <= MAX_LEARNER_LEVEL_DISTANCE
+
+
+def _assert_level_allowed(user: User, quiz_level: str | None) -> None:
+    if _is_level_allowed(user, quiz_level):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"Trình độ hiện tại của bạn là {user.cefr_level}. "
+            "Bạn chỉ được làm các bài gần trình độ hiện tại. Hãy nhờ admin điều chỉnh nếu cần."
+        ),
+    )
+
+
 def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
     normalized = []
     for index, question in enumerate(questions[:100], start=1):
@@ -334,12 +413,15 @@ def _public_question(question: dict) -> QuizQuestionPublic:
 
 def _quiz_response(quiz: Quiz) -> QuizResponse:
     questions = [_public_question(item) for item in quiz.questions_json or []]
+    quiz_set = quiz.__dict__.get("quiz_set")
     return QuizResponse(
         id=quiz.id,
         title=quiz.title,
         topic=quiz.topic,
         level=quiz.level,
         source=quiz.source,
+        quiz_set_id=quiz.quiz_set_id,
+        quiz_set_title=quiz_set.title if quiz_set else None,
         description=quiz.description,
         question_count=len(questions),
         questions=questions,
@@ -351,6 +433,51 @@ def _quiz_admin_response(quiz: Quiz) -> QuizAdminResponse:
     questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
     base = _quiz_response(quiz)
     return QuizAdminResponse(**base.model_dump(exclude={"questions"}), questions=questions)
+
+
+def _quiz_list_item(quiz: Quiz, user: User, latest_attempt: QuizAttempt | None = None) -> QuizListItem:
+    distance = _level_distance(user.cefr_level, quiz.level) if user.role == "learner" else 0
+    quiz_set = quiz.__dict__.get("quiz_set")
+    return QuizListItem(
+        id=quiz.id,
+        title=quiz.title,
+        topic=quiz.topic,
+        level=quiz.level,
+        source=quiz.source,
+        quiz_set_id=quiz.quiz_set_id,
+        quiz_set_title=quiz_set.title if quiz_set else None,
+        question_count=len(quiz.questions_json or []),
+        created_at=quiz.created_at,
+        latest_score=latest_attempt.score if latest_attempt else None,
+        is_locked=user.role == "learner" and distance > MAX_LEARNER_LEVEL_DISTANCE,
+        level_distance=distance,
+    )
+
+
+def _quiz_set_response(quiz_set: QuizSet, quizzes: list[QuizListItem], user: User) -> QuizSetDetailResponse:
+    latest_scores = [item.latest_score for item in quizzes if item.latest_score is not None]
+    question_count = sum(item.question_count for item in quizzes)
+    distance = _level_distance(user.cefr_level, quiz_set.level) if user.role == "learner" else 0
+    return QuizSetDetailResponse(
+        id=quiz_set.id,
+        title=quiz_set.title,
+        description=quiz_set.description,
+        source=quiz_set.source,
+        source_preset=quiz_set.source_preset,
+        source_title=quiz_set.source_title,
+        source_url=quiz_set.source_url,
+        license=quiz_set.license,
+        attribution=quiz_set.attribution,
+        topic=quiz_set.topic,
+        level=quiz_set.level,
+        quiz_count=len(quizzes),
+        question_count=question_count,
+        latest_score=latest_scores[0] if latest_scores else None,
+        is_locked=user.role == "learner" and distance > MAX_LEARNER_LEVEL_DISTANCE,
+        level_distance=distance,
+        created_at=quiz_set.created_at,
+        quizzes=quizzes,
+    )
 
 
 def _fallback_questions(topic: str, level: str, count: int, focus_text: str) -> list[QuizQuestion]:
@@ -1073,22 +1200,36 @@ async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_r
         return _quiz_response(quiz)
 
 
+def _allowed_levels_for_user(user: User) -> list[str]:
+    index = _level_index(user.cefr_level)
+    start = max(0, index - MAX_LEARNER_LEVEL_DISTANCE)
+    end = min(len(CEFR_LEVELS), index + MAX_LEARNER_LEVEL_DISTANCE + 1)
+    return CEFR_LEVELS[start:end]
+
+
 @router.get("", response_model=list[QuizListItem])
 async def list_quizzes(
     limit: int = Query(default=30, le=100),
     offset: int = Query(default=0, ge=0),
+    set_id: Optional[str] = Query(default=None),
     user: User = Depends(get_current_user),
 ):
     factory = get_session_factory()
     async with factory() as db:
-        result = await db.execute(
+        query = (
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(User.role == "admin")
             .order_by(desc(Quiz.created_at))
             .limit(limit)
             .offset(offset)
         )
+        if set_id:
+            query = query.where(Quiz.quiz_set_id == set_id)
+        if user.role == "learner":
+            query = query.where(Quiz.level.in_(_allowed_levels_for_user(user)))
+        result = await db.execute(query)
         quizzes = result.scalars().all()
         items = []
         for quiz in quizzes:
@@ -1101,18 +1242,7 @@ async def list_quizzes(
                     .limit(1)
                 )
                 latest_attempt = attempt_result.scalar_one_or_none()
-            items.append(
-                QuizListItem(
-                    id=quiz.id,
-                    title=quiz.title,
-                    topic=quiz.topic,
-                    level=quiz.level,
-                    source=quiz.source,
-                    question_count=len(quiz.questions_json or []),
-                    created_at=quiz.created_at,
-                    latest_score=latest_attempt.score if latest_attempt else None,
-                )
-            )
+            items.append(_quiz_list_item(quiz, user, latest_attempt))
         return items
 
 
@@ -1147,25 +1277,24 @@ async def import_quizzes(req: QuizImportRequest, user: User = Depends(require_ro
 
     factory = get_session_factory()
     async with factory() as db:
+        quiz_set = QuizSet(
+            created_by=user.id,
+            title=f"Bộ đề import - {datetime.utcnow().strftime('%d/%m %H:%M')}",
+            description="Bộ đề được import từ file CSV hoặc JSON.",
+            source="imported",
+            topic=imported[0].topic,
+            level=imported[0].level,
+        )
+        db.add(quiz_set)
         for quiz in imported:
+            quiz.quiz_set = quiz_set
             db.add(quiz)
         await db.commit()
+        await db.refresh(quiz_set)
         for quiz in imported:
             await db.refresh(quiz)
 
-    items = [
-        QuizListItem(
-            id=quiz.id,
-            title=quiz.title,
-            topic=quiz.topic,
-            level=quiz.level,
-            source=quiz.source,
-            question_count=len(quiz.questions_json or []),
-            created_at=quiz.created_at,
-            latest_score=None,
-        )
-        for quiz in imported
-    ]
+    items = [_quiz_list_item(quiz, user) for quiz in imported]
     return QuizImportResponse(
         imported_count=len(items),
         question_count=total_questions,
@@ -1210,25 +1339,29 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
 
     factory = get_session_factory()
     async with factory() as db:
+        quiz_set = QuizSet(
+            created_by=user.id,
+            title=f"{info['title']} - {req.level}",
+            description=f"Bộ quiz tạo từ nguồn {info['attribution']}.",
+            source="open_source",
+            source_preset=req.preset,
+            source_title=info["title"],
+            source_url=info.get("url"),
+            license=info["license"],
+            attribution=info["attribution"],
+            topic=req.topic,
+            level=req.level,
+        )
+        db.add(quiz_set)
         for quiz in imported:
+            quiz.quiz_set = quiz_set
             db.add(quiz)
         await db.commit()
+        await db.refresh(quiz_set)
         for quiz in imported:
             await db.refresh(quiz)
 
-    items = [
-        QuizListItem(
-            id=quiz.id,
-            title=quiz.title,
-            topic=quiz.topic,
-            level=quiz.level,
-            source=quiz.source,
-            question_count=len(quiz.questions_json or []),
-            created_at=quiz.created_at,
-            latest_score=None,
-        )
-        for quiz in imported
-    ]
+    items = [_quiz_list_item(quiz, user) for quiz in imported]
     return QuizSourceImportResponse(
         imported_count=len(items),
         question_count=total_questions,
@@ -1240,6 +1373,142 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
     )
 
 
+@router.post("/source-sets/generate", response_model=QuizSetGenerateResponse)
+async def generate_quiz_sets_from_sources(
+    req: QuizSourceSetGenerateRequest,
+    user: User = Depends(require_role("admin")),
+):
+    created_sets: list[QuizSet] = []
+    created_quizzes: list[Quiz] = []
+    total_questions = 0
+
+    factory = get_session_factory()
+    async with factory() as db:
+        for preset in req.presets:
+            if preset == "custom_url":
+                raise HTTPException(status_code=422, detail="custom_url cần dùng màn Nguồn mở với URL riêng.")
+
+            source_req = QuizSourceImportRequest(
+                preset=preset,
+                topic=req.topic,
+                level=req.level,
+                quiz_count=req.quiz_count_per_set,
+                questions_per_quiz=req.questions_per_quiz,
+                focus=req.focus,
+            )
+            info = _source_info(source_req)
+            source_text = await _fetch_source_text(info.get("url"))
+            generated_items = await _generate_source_quizzes(source_req, info, source_text)
+            source_note = f"Nguồn: {info['attribution']}. License: {info['license']}"
+
+            quiz_set = QuizSet(
+                created_by=user.id,
+                title=f"{info['title']} - {req.level}",
+                description=f"Bộ quiz {req.level} theo nguồn {info['attribution']}.",
+                source="open_source",
+                source_preset=preset,
+                source_title=info["title"],
+                source_url=info.get("url"),
+                license=info["license"],
+                attribution=info["attribution"],
+                topic=req.topic,
+                level=req.level,
+            )
+            db.add(quiz_set)
+
+            set_quiz_count = 0
+            for item in generated_items[: req.quiz_count_per_set]:
+                questions = _normalize_questions(item.questions)[: req.questions_per_quiz]
+                if len(questions) < 3:
+                    continue
+                total_questions += len(questions)
+                description = (item.description or "").strip()
+                if source_note not in description:
+                    description = f"{description}\n{source_note}".strip()
+                quiz = Quiz(
+                    user_id=user.id,
+                    quiz_set=quiz_set,
+                    title=item.title.strip() or f"{info['title']} - {req.level}",
+                    topic=item.topic or req.topic,
+                    level=item.level or req.level,
+                    source="open_source",
+                    description=description,
+                    questions_json=[question.model_dump() for question in questions],
+                )
+                db.add(quiz)
+                created_quizzes.append(quiz)
+                set_quiz_count += 1
+
+            if set_quiz_count:
+                created_sets.append(quiz_set)
+
+        if not created_sets:
+            raise HTTPException(status_code=422, detail="Không tạo được bộ quiz hợp lệ từ các nguồn.")
+
+        await db.commit()
+        for quiz_set in created_sets:
+            await db.refresh(quiz_set)
+        for quiz in created_quizzes:
+            await db.refresh(quiz)
+
+    set_details = []
+    for quiz_set in created_sets:
+        quizzes = [_quiz_list_item(quiz, user) for quiz in created_quizzes if quiz.quiz_set_id == quiz_set.id]
+        set_details.append(_quiz_set_response(quiz_set, quizzes, user))
+
+    return QuizSetGenerateResponse(
+        generated_count=len(set_details),
+        quiz_count=len(created_quizzes),
+        question_count=total_questions,
+        sets=set_details,
+    )
+
+
+@router.get("/sets", response_model=list[QuizSetDetailResponse])
+async def list_quiz_sets(
+    limit: int = Query(default=30, le=100),
+    offset: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+):
+    factory = get_session_factory()
+    async with factory() as db:
+        query = (
+            select(QuizSet)
+            .order_by(desc(QuizSet.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        if user.role == "learner":
+            query = query.where(QuizSet.level.in_(_allowed_levels_for_user(user)))
+
+        result = await db.execute(query)
+        quiz_sets = result.scalars().all()
+        details: list[QuizSetDetailResponse] = []
+        for quiz_set in quiz_sets:
+            quiz_result = await db.execute(
+                select(Quiz)
+                .options(selectinload(Quiz.quiz_set))
+                .where(Quiz.quiz_set_id == quiz_set.id)
+                .order_by(desc(Quiz.created_at))
+            )
+            quizzes = quiz_result.scalars().all()
+            items = []
+            for quiz in quizzes:
+                latest_attempt = None
+                if user.role == "learner":
+                    attempt_result = await db.execute(
+                        select(QuizAttempt)
+                        .where(QuizAttempt.quiz_id == quiz.id, QuizAttempt.user_id == user.id)
+                        .order_by(desc(QuizAttempt.created_at))
+                        .limit(1)
+                    )
+                    latest_attempt = attempt_result.scalar_one_or_none()
+                items.append(_quiz_list_item(quiz, user, latest_attempt))
+            if items:
+                details.append(_quiz_set_response(quiz_set, items, user))
+        return details
+
+
 @router.delete("/{quiz_id}", status_code=204)
 async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin"))):
     del user
@@ -1247,6 +1516,7 @@ async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin")))
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(Quiz.id == quiz_id, User.role == "admin")
         )
@@ -1254,8 +1524,16 @@ async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin")))
         if not quiz:
             raise HTTPException(status_code=404, detail="Quiz not found")
 
+        quiz_set_id = quiz.quiz_set_id
         await db.execute(delete(QuizAttempt).where(QuizAttempt.quiz_id == quiz.id))
         await db.delete(quiz)
+        if quiz_set_id:
+            await db.flush()
+            remaining = (
+                await db.execute(select(Quiz.id).where(Quiz.quiz_set_id == quiz_set_id).limit(1))
+            ).scalar_one_or_none()
+            if remaining is None:
+                await db.execute(delete(QuizSet).where(QuizSet.id == quiz_set_id))
         await db.commit()
         return Response(status_code=204)
 
@@ -1267,6 +1545,7 @@ async def get_admin_quiz(quiz_id: str, user: User = Depends(require_role("admin"
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(Quiz.id == quiz_id, User.role == "admin")
         )
@@ -1287,6 +1566,7 @@ async def update_quiz(quiz_id: str, req: QuizUpdateRequest, user: User = Depends
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(Quiz.id == quiz_id, User.role == "admin")
         )
@@ -1306,17 +1586,18 @@ async def update_quiz(quiz_id: str, req: QuizUpdateRequest, user: User = Depends
 
 @router.get("/{quiz_id}", response_model=QuizResponse)
 async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
-    del user
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(Quiz.id == quiz_id, User.role == "admin")
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
             raise HTTPException(status_code=404, detail="Quiz not found")
+        _assert_level_allowed(user, quiz.level)
         return _quiz_response(quiz)
 
 
@@ -1327,12 +1608,14 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
+            .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
             .where(Quiz.id == quiz_id, User.role == "admin")
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
             raise HTTPException(status_code=404, detail="Quiz not found")
+        _assert_level_allowed(user, quiz.level)
 
         questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
         score, correct_count, question_results = _score_quiz(questions, req.answers)

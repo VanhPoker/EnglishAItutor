@@ -88,6 +88,24 @@ export async function register(data: {
   });
 }
 
+export async function forgotPassword(email: string): Promise<void> {
+  await apiFetch(`${API_BASE}/auth/forgot-password`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  }, false);
+}
+
+export async function resetPassword(data: {
+  email: string;
+  code: string;
+  password: string;
+}): Promise<void> {
+  await apiFetch(`${API_BASE}/auth/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  }, false);
+}
+
 export async function login(email: string, password: string): Promise<AuthResponse> {
   return apiFetch<AuthResponse>(`${API_BASE}/auth/login`, {
     method: "POST",
@@ -287,6 +305,8 @@ export interface QuizResponse {
   topic: string;
   level: string;
   source: string;
+  quiz_set_id?: string | null;
+  quiz_set_title?: string | null;
   description: string | null;
   question_count: number;
   questions: QuizQuestion[];
@@ -303,9 +323,13 @@ export interface QuizListItem {
   topic: string;
   level: string;
   source: string;
+  quiz_set_id?: string | null;
+  quiz_set_title?: string | null;
   question_count: number;
   created_at: string;
   latest_score: number | null;
+  is_locked: boolean;
+  level_distance: number;
 }
 
 export interface QuizGenerateRequest {
@@ -362,6 +386,43 @@ export interface QuizSourceImportResponse extends QuizImportResponse {
   source_url?: string | null;
   license: string;
   attribution: string;
+}
+
+export interface QuizSetInfo {
+  id: string;
+  title: string;
+  description?: string | null;
+  source: string;
+  source_preset?: QuizSourcePreset | null;
+  source_title?: string | null;
+  source_url?: string | null;
+  license?: string | null;
+  attribution?: string | null;
+  topic: string;
+  level: string;
+  quiz_count: number;
+  question_count: number;
+  latest_score: number | null;
+  is_locked: boolean;
+  level_distance: number;
+  created_at: string;
+  quizzes: QuizListItem[];
+}
+
+export interface QuizSetGenerateRequest {
+  topic: string;
+  level: string;
+  presets?: QuizSourcePreset[];
+  quiz_count_per_set: number;
+  questions_per_quiz: number;
+  focus?: string;
+}
+
+export interface QuizSetGenerateResponse {
+  generated_count: number;
+  quiz_count: number;
+  question_count: number;
+  sets: QuizSetInfo[];
 }
 
 export interface QuizImageUploadResponse {
@@ -423,6 +484,10 @@ export async function getQuizzes(): Promise<QuizListItem[]> {
   return apiFetch<QuizListItem[]>(`${API_BASE}/quizzes`);
 }
 
+export async function getQuizSets(): Promise<QuizSetInfo[]> {
+  return apiFetch<QuizSetInfo[]>(`${API_BASE}/quizzes/sets`);
+}
+
 export async function getQuiz(quizId: string): Promise<QuizResponse> {
   return apiFetch<QuizResponse>(`${API_BASE}/quizzes/${quizId}`);
 }
@@ -463,6 +528,15 @@ export async function importQuizzesFromSource(
   data: QuizSourceImportRequest
 ): Promise<QuizSourceImportResponse> {
   return apiFetch<QuizSourceImportResponse>(`${API_BASE}/quizzes/source-import`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function generateQuizSetsFromSources(
+  data: QuizSetGenerateRequest
+): Promise<QuizSetGenerateResponse> {
+  return apiFetch<QuizSetGenerateResponse>(`${API_BASE}/quizzes/source-sets/generate`, {
     method: "POST",
     body: JSON.stringify(data),
   });

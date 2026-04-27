@@ -20,6 +20,7 @@ import Badge from "../components/ui/Badge";
 import {
   createQuiz,
   deleteQuiz,
+  generateQuizSetsFromSources,
   generateQuiz,
   getAdminQuiz,
   getQuizzes,
@@ -299,6 +300,7 @@ export default function QuizStudio() {
   const [savingManual, setSavingManual] = useState(false);
   const [importing, setImporting] = useState(false);
   const [sourceImporting, setSourceImporting] = useState(false);
+  const [sourceSetGenerating, setSourceSetGenerating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
@@ -532,6 +534,30 @@ export default function QuizStudio() {
     }
   };
 
+  const handleGenerateSourceSets = async () => {
+    setSourceSetGenerating(true);
+    setError("");
+    setActionMessage("");
+    setSourceMessage("");
+    try {
+      const response = await generateQuizSetsFromSources({
+        topic,
+        level,
+        quiz_count_per_set: sourceQuizCount,
+        questions_per_quiz: questionCount,
+        focus: sourceFocus.trim() || undefined,
+      });
+      await loadQuizzes();
+      setSourceMessage(
+        `Đã tạo ${response.generated_count} bộ quiz từ các nguồn với ${response.quiz_count} bài và ${response.question_count} câu.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được các bộ quiz từ nguồn");
+    } finally {
+      setSourceSetGenerating(false);
+    }
+  };
+
   const handleDeleteQuiz = async (quiz: QuizListItem) => {
     if (!window.confirm(`Xoá quiz "${quiz.title}" khỏi kho đề?`)) return;
 
@@ -690,6 +716,9 @@ export default function QuizStudio() {
                           <Badge variant={quiz.source === "mistakes" ? "warning" : "info"}>
                             {quizSourceLabel(quiz.source)}
                           </Badge>
+                          {quiz.quiz_set_title && (
+                            <Badge variant="success">{quiz.quiz_set_title}</Badge>
+                          )}
                           {quiz.latest_score != null && (
                             <Badge variant={quiz.latest_score >= 70 ? "success" : "error"}>
                               {quiz.latest_score}%
@@ -911,6 +940,15 @@ export default function QuizStudio() {
                   >
                     {sourceImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe2 className="h-4 w-4" />}
                     Tạo từ nguồn mở
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sourceSetGenerating}
+                    onClick={handleGenerateSourceSets}
+                    className="btn-secondary inline-flex w-full items-center justify-center gap-2"
+                  >
+                    {sourceSetGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe2 className="h-4 w-4" />}
+                    Tạo bộ từ tất cả nguồn
                   </button>
                 </div>
               ) : mode === "manual" ? (

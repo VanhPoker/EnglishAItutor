@@ -36,20 +36,11 @@ const topics = [
   { name: "Sức khoẻ", value: "health_fitness", hint: "Thói quen và lời khuyên" },
 ];
 
-const levels = [
-  { value: "A1", label: "A1", hint: "Cụm từ đơn giản" },
-  { value: "A2", label: "A2", hint: "Giao tiếp thường ngày" },
-  { value: "B1", label: "B1", hint: "Tình huống phổ biến" },
-  { value: "B2", label: "B2", hint: "Thảo luận trôi chảy" },
-  { value: "C1", label: "C1", hint: "Diễn đạt chính xác" },
-  { value: "C2", label: "C2", hint: "Gần bản ngữ" },
-];
-
 export default function Home() {
   const navigate = useNavigate();
   const authUser = useAuthStore((s) => s.user);
   const updateAuthUser = useAuthStore((s) => s.updateUser);
-  const { level, topic, setLevel, setTopic } = useUserStore();
+  const { level, topic, setTopic } = useUserStore();
   const [canClaimAdmin, setCanClaimAdmin] = useState(false);
   const [claimingAdmin, setClaimingAdmin] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -236,26 +227,15 @@ export default function Home() {
               <BookOpen className="h-5 w-5 text-blue-700" />
               <div>
                 <h2 className="font-semibold text-gray-900">Trình độ</h2>
-                <p className="text-sm text-gray-500">Dùng cho gia sư và gợi ý bài luyện</p>
+                <p className="text-sm text-gray-500">Admin quản lý để giữ lộ trình học ổn định</p>
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              {levels.map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => setLevel(item.value)}
-                  className={`rounded-lg border p-3 text-left transition ${
-                    level === item.value
-                      ? "border-blue-300 bg-blue-50 text-blue-800"
-                      : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-                  }`}
-                >
-                  <span className="block text-sm font-bold">{item.label}</span>
-                  <span className="mt-1 block text-xs text-gray-500">{item.hint}</span>
-                </button>
-              ))}
+            <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <p className="text-3xl font-bold text-blue-800">{authUser?.cefr_level || level}</p>
+              <p className="mt-2 text-sm text-blue-900">
+                Học viên chỉ làm các bài quanh trình độ hiện tại. Nếu cần đổi level, admin cập nhật ở màn quản lý người dùng.
+              </p>
             </div>
           </Card>
 

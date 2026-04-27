@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     REFRESH_COOKIE_SECURE: bool = False
     REFRESH_COOKIE_SAMESITE: str = "lax"
 
+    # Email for password reset codes. Gmail SMTP works with an app password.
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: SecretStr | None = None
+    SMTP_FROM_EMAIL: str | None = None
+    PASSWORD_RESET_CODE_MINUTES: int = 10
+
     # LangGraph checkpoint
     CHECKPOINT_TABLES: list[str] = ["checkpoint_blobs", "checkpoint_writes", "checkpoints"]
 
