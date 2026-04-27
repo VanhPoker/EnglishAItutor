@@ -1,13 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "http://4.145.98.216:8080/api/$1"
+      "destination": "http://4.145.98.216/api/$1"
     },
     {
       "source": "/health",
-      "destination": "http://4.145.98.216:8080/health"
+      "destination": "http://4.145.98.216/health"
+    },
+    {
+      "source": "/media/(.*)",
+      "destination": "http://4.145.98.216/media/$1"
     },
     {
       "source": "/(.*)",
