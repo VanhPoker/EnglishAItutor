@@ -66,8 +66,15 @@ function combineTranscriptParts(parts: string[]) {
 }
 
 function getLiveKitUrl() {
-  if (import.meta.env.VITE_LIVEKIT_URL) {
-    return import.meta.env.VITE_LIVEKIT_URL;
+  const configuredUrl = import.meta.env.VITE_LIVEKIT_URL?.trim();
+  if (configuredUrl) {
+    const isLoopbackUrl =
+      configuredUrl.includes("://localhost") ||
+      configuredUrl.includes("://127.0.0.1");
+
+    if (!(window.location.protocol === "https:" && isLoopbackUrl)) {
+      return configuredUrl;
+    }
   }
 
   if (window.location.protocol === "https:") {
