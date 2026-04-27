@@ -180,9 +180,6 @@ async def entrypoint(ctx: JobContext):
         ),
     )
 
-    # Speak the greeting. The frontend renders the final LiveKit transcription.
-    await session.say(greeting, allow_interruptions=False)
-
     # ── Handle text chat messages ────────────────────────────────
     async def handle_text_stream_async(reader, participant_identity):
         try:
@@ -211,6 +208,10 @@ async def entrypoint(ctx: JobContext):
         task.add_done_callback(lambda t: _active_tasks.discard(t))
 
     ctx.room.register_text_stream_handler(FE_CHAT_TOPIC, handle_text_stream)
+    logger.info(f"Registered text stream handler on topic: {FE_CHAT_TOPIC}")
+
+    # Speak the greeting. The frontend renders the final LiveKit transcription.
+    await session.say(greeting, allow_interruptions=False)
 
     # ── Metrics & logging ────────────────────────────────────────
     @session.on("metrics_collected")
