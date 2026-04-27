@@ -25,6 +25,7 @@ const sourceLabels: Record<string, string> = {
   mistakes: "Từ lỗi sai",
   topic: "Theo chủ đề",
   manual: "Tự tạo",
+  imported: "Import file",
 };
 
 const roleLabels: Record<string, string> = {

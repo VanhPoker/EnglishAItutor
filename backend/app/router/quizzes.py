@@ -22,7 +22,7 @@ from app.database.models import ErrorLog, Quiz, QuizAttempt, User
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
-QuizSource = Literal["ai", "manual", "mistakes"]
+QuizSource = Literal["ai", "manual", "mistakes", "imported"]
 
 
 class QuizQuestion(BaseModel):
@@ -68,6 +68,18 @@ class QuizGenerateRequest(BaseModel):
     focus: Optional[str] = None
 
 
+class QuizImportItem(BaseModel):
+    title: str = "Imported English quiz"
+    topic: str = "free_conversation"
+    level: str = "B1"
+    description: Optional[str] = None
+    questions: list[QuizQuestion] = Field(default_factory=list)
+
+
+class QuizImportRequest(BaseModel):
+    quizzes: list[QuizImportItem] = Field(default_factory=list, max_length=50)
+
+
 class QuizAnswerSubmit(BaseModel):
     answers: dict[str, str]
 
@@ -93,6 +105,12 @@ class QuizListItem(BaseModel):
     question_count: int
     created_at: datetime
     latest_score: Optional[int] = None
+
+
+class QuizImportResponse(BaseModel):
+    imported_count: int
+    question_count: int
+    quizzes: list[QuizListItem]
 
 
 class QuestionResult(BaseModel):
@@ -142,6 +160,44 @@ class GeneratedQuiz(BaseModel):
 
 def _normalize_answer(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower()).strip(" .!?;:,")
+
+
+def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
+    normalized = []
+    for index, question in enumerate(questions[:100], start=1):
+        prompt = question.prompt.strip()
+        correct_answer = question.correct_answer.strip()
+        explanation = question.explanation.strip()
+        focus = question.focus.strip() or "grammar"
+
+        if not prompt or not correct_answer:
+            continue
+
+        options = [item.strip() for item in question.options if item and item.strip()]
+        if question.type == "multiple_choice":
+            answer_key = correct_answer.strip().upper()
+            key_map = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
+            if answer_key in key_map and key_map[answer_key] < len(options):
+                correct_answer = options[key_map[answer_key]]
+
+            if correct_answer not in options:
+                options = [correct_answer, *[item for item in options if _normalize_answer(item) != _normalize_answer(correct_answer)]]
+            options = options[:6]
+        else:
+            options = []
+
+        normalized.append(
+            QuizQuestion(
+                id=question.id.strip() or f"q{index}",
+                type=question.type,
+                prompt=prompt,
+                options=options,
+                correct_answer=correct_answer,
+                explanation=explanation,
+                focus=focus,
+            )
+        )
+    return normalized
 
 
 def _public_question(question: dict) -> QuizQuestionPublic:
@@ -393,7 +449,8 @@ Keep it concrete and useful for the next study session.
 
 @router.post("", response_model=QuizResponse)
 async def create_quiz(req: QuizCreateRequest, user: User = Depends(get_current_user)):
-    if len(req.questions) < 1:
+    questions = _normalize_questions(req.questions)
+    if len(questions) < 1:
         raise HTTPException(status_code=422, detail="At least one question is required")
 
     factory = get_session_factory()
@@ -405,7 +462,7 @@ async def create_quiz(req: QuizCreateRequest, user: User = Depends(get_current_u
             level=req.level,
             source=req.source,
             description=req.description,
-            questions_json=[item.model_dump() for item in req.questions],
+            questions_json=[item.model_dump() for item in questions],
         )
         db.add(quiz)
         await db.commit()
@@ -472,6 +529,63 @@ async def list_quizzes(
                 )
             )
         return items
+
+
+@router.post("/import", response_model=QuizImportResponse)
+async def import_quizzes(req: QuizImportRequest, user: User = Depends(get_current_user)):
+    if not req.quizzes:
+        raise HTTPException(status_code=422, detail="No quizzes to import")
+
+    imported: list[Quiz] = []
+    total_questions = 0
+    for item in req.quizzes:
+        questions = _normalize_questions(item.questions)
+        if not questions:
+            continue
+        total_questions += len(questions)
+        if total_questions > 1000:
+            raise HTTPException(status_code=422, detail="Import is limited to 1000 questions per upload")
+        imported.append(
+            Quiz(
+                user_id=user.id,
+                title=item.title.strip() or "Imported English quiz",
+                topic=item.topic,
+                level=item.level,
+                source="imported",
+                description=item.description,
+                questions_json=[question.model_dump() for question in questions],
+            )
+        )
+
+    if not imported:
+        raise HTTPException(status_code=422, detail="No valid questions found in import file")
+
+    factory = get_session_factory()
+    async with factory() as db:
+        for quiz in imported:
+            db.add(quiz)
+        await db.commit()
+        for quiz in imported:
+            await db.refresh(quiz)
+
+    items = [
+        QuizListItem(
+            id=quiz.id,
+            title=quiz.title,
+            topic=quiz.topic,
+            level=quiz.level,
+            source=quiz.source,
+            question_count=len(quiz.questions_json or []),
+            created_at=quiz.created_at,
+            latest_score=None,
+        )
+        for quiz in imported
+    ]
+    return QuizImportResponse(
+        imported_count=len(items),
+        question_count=total_questions,
+        quizzes=items,
+    )
 
 
 @router.get("/{quiz_id}", response_model=QuizResponse)
