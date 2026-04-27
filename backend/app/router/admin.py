@@ -5,18 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import delete, desc, func, or_, select
 
 from app.core.auth import get_current_user, require_role
 from app.database.connection import get_session_factory
-from app.database.models import PracticeSession, User
+from app.database.models import ErrorLog, PaymentRequest, PracticeSession, Quiz, QuizAttempt, RefreshToken, User
 
 router = APIRouter(tags=["Admin"])
 
 CEFRLevel = Literal["A1", "A2", "B1", "B2", "C1", "C2"]
 UserRole = Literal["learner", "admin"]
+SubscriptionPlan = Literal["free", "plus", "ultra"]
 
 
 class AdminUserResponse(BaseModel):
@@ -26,6 +27,7 @@ class AdminUserResponse(BaseModel):
     native_language: str
     cefr_level: CEFRLevel
     role: UserRole
+    subscription_plan: SubscriptionPlan
     created_at: datetime
     updated_at: datetime
     session_count: int
@@ -45,6 +47,7 @@ class AdminIdentityResponse(BaseModel):
     native_language: str
     cefr_level: CEFRLevel
     role: UserRole
+    subscription_plan: SubscriptionPlan
 
 
 class AdminBootstrapStatusResponse(BaseModel):
@@ -56,6 +59,7 @@ class AdminUserUpdateRequest(BaseModel):
     native_language: str | None = Field(default=None, min_length=2, max_length=16)
     cefr_level: CEFRLevel | None = None
     role: UserRole | None = None
+    subscription_plan: SubscriptionPlan | None = None
 
     @field_validator("name")
     @classmethod
@@ -87,6 +91,7 @@ def _user_row_to_response(row) -> AdminUserResponse:
         native_language=user.native_language,
         cefr_level=user.cefr_level,
         role=user.role,
+        subscription_plan=user.subscription_plan or "free",
         created_at=user.created_at,
         updated_at=user.updated_at,
         session_count=int(row.session_count or 0),
@@ -103,6 +108,7 @@ def _identity_response(user: User) -> AdminIdentityResponse:
         native_language=user.native_language,
         cefr_level=user.cefr_level,
         role=user.role,
+        subscription_plan=user.subscription_plan or "free",
     )
 
 
@@ -248,3 +254,46 @@ async def update_user(
         row.total_minutes = stats_row.total_minutes
         row.last_session_at = stats_row.last_session_at
         return _user_row_to_response(row)
+
+
+@router.delete("/admin/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: str,
+    current_admin: User = Depends(require_role("admin")),
+):
+    if user_id == current_admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own admin account.")
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if user.role == "admin":
+            admin_count = int(
+                (
+                    await session.execute(
+                        select(func.count(User.id)).where(User.role == "admin")
+                    )
+                ).scalar_one()
+            )
+            if admin_count <= 1:
+                raise HTTPException(status_code=400, detail="At least one admin must remain.")
+
+        owned_quiz_ids = (
+            await session.execute(select(Quiz.id).where(Quiz.user_id == user_id))
+        ).scalars().all()
+        if owned_quiz_ids:
+            await session.execute(delete(QuizAttempt).where(QuizAttempt.quiz_id.in_(owned_quiz_ids)))
+
+        await session.execute(delete(QuizAttempt).where(QuizAttempt.user_id == user_id))
+        await session.execute(delete(Quiz).where(Quiz.user_id == user_id))
+        await session.execute(delete(ErrorLog).where(ErrorLog.user_id == user_id))
+        await session.execute(delete(PracticeSession).where(PracticeSession.user_id == user_id))
+        await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+        await session.execute(delete(PaymentRequest).where(PaymentRequest.user_id == user_id))
+        await session.delete(user)
+        await session.commit()
+        return Response(status_code=204)

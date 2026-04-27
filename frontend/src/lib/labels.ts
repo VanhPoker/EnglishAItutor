@@ -35,6 +35,12 @@ const roleLabels: Record<string, string> = {
   learner: "Học viên",
 };
 
+const subscriptionLabels: Record<string, string> = {
+  free: "Free",
+  plus: "Plus",
+  ultra: "Ultra",
+};
+
 const questionTypeLabels: Record<string, string> = {
   multiple_choice: "Trắc nghiệm",
   fill_blank: "Điền từ",
@@ -58,6 +64,10 @@ export function quizSourceLabel(value: string) {
 
 export function roleLabel(value: string) {
   return roleLabels[value] || humanize(value);
+}
+
+export function subscriptionLabel(value: string) {
+  return subscriptionLabels[value] || humanize(value);
 }
 
 export function questionTypeLabel(value: string) {

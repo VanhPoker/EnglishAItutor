@@ -8,6 +8,7 @@ export interface AuthUser {
   native_language: string;
   cefr_level: string;
   role: "learner" | "admin";
+  subscription_plan: "free" | "plus" | "ultra";
 }
 
 interface AuthState {
