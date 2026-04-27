@@ -12,7 +12,7 @@ import AudioVisualizer from "../voice/AudioVisualizer";
 import { topicLabel } from "../../lib/labels";
 
 export default function ChatRoom() {
-  const { room, connectionState, connect, disconnect, sendText, toggleMicrophone } = useLiveKit();
+  const { room, connectionState, connect, disconnect, sendText, toggleMicrophone, lastError } = useLiveKit();
   const { topic, level } = useUserStore();
   const navigate = useNavigate();
   const isConnected = useChatStore((s) => s.isConnected);
@@ -102,6 +102,11 @@ export default function ChatRoom() {
 
       {/* Voice + Text controls */}
       <div className="border-t border-gray-200/30">
+        {lastError && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-700">
+            {lastError}
+          </div>
+        )}
         <VoiceControls
           micEnabled={micEnabled}
           onToggleMic={handleToggleMic}

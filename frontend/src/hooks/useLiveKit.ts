@@ -83,12 +83,14 @@ export function useLiveKit() {
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const { addMessage, setConnected, setCurrentTranscript } = useChatStore();
 
   const connect = useCallback(
     async (req: TokenRequest) => {
       const { token } = await getToken(req);
+      setLastError(null);
 
       finalTranscriptIdsRef.current.clear();
       transcriptContentRef.current.clear();
@@ -109,6 +111,26 @@ export function useLiveKit() {
       room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
         setConnectionState(state);
         setConnected(state === ConnectionState.Connected);
+      });
+
+      room.on(RoomEvent.MediaDevicesError, (error) => {
+        console.error("Media device error:", error);
+        setLastError("Không truy cập được micro trên trình duyệt.");
+      });
+
+      room.on(RoomEvent.ParticipantPermissionsChanged, () => {
+        const permissions = room.localParticipant.permissions;
+        if (permissions?.canPublish === false) {
+          setLastError("Token hiện tại không có quyền publish audio.");
+          return;
+        }
+        if (permissions?.canPublishData === false) {
+          setLastError("Token hiện tại không có quyền gửi dữ liệu chat.");
+        }
+      });
+
+      room.on(RoomEvent.LocalTrackPublished, () => {
+        setLastError(null);
       });
 
       // Agent audio track
@@ -257,6 +279,7 @@ export function useLiveKit() {
       roomRef.current = null;
       setConnected(false);
       setCurrentTranscript("");
+      setLastError(null);
     }
   }, [addMessage, setConnected, setCurrentTranscript]);
 
@@ -268,11 +291,13 @@ export function useLiveKit() {
     addMessage({ role: "user", content: text });
 
     try {
-      const writer = await room.localParticipant.streamText({
+      await room.localParticipant.sendText(text, {
         topic: CHAT_TOPIC,
       });
-      await writer.write(text);
-      await writer.close();
+      setLastError(null);
+    } catch (error) {
+      console.error("Failed to send text over LiveKit:", error);
+      setLastError("Không gửi được tin nhắn vào phiên học. Đường RTC data chưa sẵn sàng.");
     } finally {
       sendingRef.current = false;
     }
@@ -283,8 +308,18 @@ export function useLiveKit() {
     if (!room) return;
 
     const enabled = room.localParticipant.isMicrophoneEnabled;
-    await room.localParticipant.setMicrophoneEnabled(!enabled);
-    return !enabled;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!enabled);
+      setLastError(null);
+      return !enabled;
+    } catch (error) {
+      console.error("Failed to toggle microphone:", error);
+      const message =
+        room.localParticipant.lastMicrophoneError?.message ||
+        "Không bật được micro. Có thể WebRTC chưa thiết lập được hoặc trình duyệt chưa cấp quyền.";
+      setLastError(message);
+      return enabled;
+    }
   }, []);
 
   return {
@@ -294,5 +329,6 @@ export function useLiveKit() {
     disconnect,
     sendText,
     toggleMicrophone,
+    lastError,
   };
 }
