@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, ClipboardList, Loader2, RefreshCw } from "lucide-react";
+import { ArrowRight, ClipboardList, Loader2, RefreshCw, Sparkles, Target } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { getQuizSets, getQuizzes, type QuizListItem, type QuizSetInfo } from "../lib/api";
+import { generateQuiz, getQuizSets, getQuizzes, type QuizListItem, type QuizSetInfo } from "../lib/api";
 import { quizSourceLabel, topicLabel } from "../lib/labels";
+import { useUserStore } from "../stores/userStore";
 
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("vi-VN", {
@@ -16,10 +17,14 @@ function formatDate(value: string) {
 }
 
 export default function LearnerQuizzes() {
+  const navigate = useNavigate();
+  const { topic, level } = useUserStore();
   const [quizzes, setQuizzes] = useState<QuizListItem[]>([]);
   const [quizSets, setQuizSets] = useState<QuizSetInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [generatingRemedial, setGeneratingRemedial] = useState(false);
 
   const allQuizzes = useMemo(
     () => [...quizSets.flatMap((set) => set.quizzes), ...quizzes],
@@ -48,6 +53,26 @@ export default function LearnerQuizzes() {
   useEffect(() => {
     void loadQuizzes();
   }, []);
+
+  const handleGenerateRemedialQuiz = async () => {
+    setGeneratingRemedial(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const quiz = await generateQuiz({
+        topic,
+        level,
+        question_count: 5,
+        source: "mistakes",
+      });
+      setActionMessage("Đã tạo bài ôn lỗi cá nhân. Đang mở bài cho bạn.");
+      navigate(`/quizzes/${quiz.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được quiz ôn lỗi");
+    } finally {
+      setGeneratingRemedial(false);
+    }
+  };
 
   return (
     <Layout>
@@ -78,6 +103,12 @@ export default function LearnerQuizzes() {
           </div>
         )}
 
+        {actionMessage && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {actionMessage}
+          </div>
+        )}
+
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <p className="text-sm text-gray-500">Bài quiz có thể làm</p>
@@ -94,6 +125,31 @@ export default function LearnerQuizzes() {
             </p>
           </Card>
         </div>
+
+        <Card className="mt-6 border-amber-200 bg-amber-50">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-amber-700 ring-1 ring-amber-200">
+                <Target className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-gray-900">Quiz ôn lỗi cá nhân</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Tạo một bài ngắn bám vào lỗi nói, lỗi quiz gần đây và nhóm kỹ năng bạn còn yếu.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={generatingRemedial}
+              onClick={() => void handleGenerateRemedialQuiz()}
+              className="btn-primary inline-flex items-center justify-center gap-2"
+            >
+              {generatingRemedial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Tạo quiz ôn lỗi
+            </button>
+          </div>
+        </Card>
 
         <Card className="mt-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

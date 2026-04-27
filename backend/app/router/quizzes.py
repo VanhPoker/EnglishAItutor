@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user, require_role
@@ -425,6 +425,10 @@ def _public_question(question: dict) -> QuizQuestionPublic:
     )
 
 
+def _generated_questions_from_quiz_questions(questions: list[QuizQuestion]) -> list[GeneratedQuizQuestion]:
+    return [GeneratedQuizQuestion.model_validate(question.model_dump()) for question in questions]
+
+
 def _quiz_response(quiz: Quiz) -> QuizResponse:
     questions = [_public_question(item) for item in quiz.questions_json or []]
     quiz_set = quiz.__dict__.get("quiz_set")
@@ -580,6 +584,320 @@ async def _recent_error_focus(db, user_id: str) -> str:
         if original and correction:
             lines.append(f"- {item.error_type}: {original} -> {correction}. {explanation}")
     return "\n".join(lines)
+
+
+async def _recent_errors(db, user_id: str, limit: int = 8) -> list[ErrorLog]:
+    result = await db.execute(
+        select(ErrorLog)
+        .where(ErrorLog.user_id == user_id)
+        .order_by(desc(ErrorLog.created_at))
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+async def _recent_wrong_quiz_results(db, user_id: str, attempt_limit: int = 8, result_limit: int = 8) -> list[QuestionResult]:
+    attempt_rows = await db.execute(
+        select(QuizAttempt)
+        .where(QuizAttempt.user_id == user_id)
+        .order_by(desc(QuizAttempt.created_at))
+        .limit(attempt_limit)
+    )
+    wrong_results: list[QuestionResult] = []
+    for attempt in attempt_rows.scalars().all():
+        for item in attempt.result_json or []:
+            result = QuestionResult.model_validate(item)
+            if not result.is_correct:
+                wrong_results.append(result)
+                if len(wrong_results) >= result_limit:
+                    return wrong_results
+    return wrong_results
+
+
+def _replace_first_exact(text: str, needle: str) -> str:
+    if not text or not needle:
+        return text
+    pattern = re.compile(re.escape(needle), flags=re.IGNORECASE)
+    return pattern.sub("_____", text, count=1)
+
+
+def _difference_phrase(original: str, corrected: str) -> str | None:
+    original_tokens = re.findall(r"[A-Za-z']+", original or "")
+    corrected_tokens = re.findall(r"[A-Za-z']+", corrected or "")
+    if not corrected_tokens:
+        return None
+
+    original_norm = {_normalize_answer(token) for token in original_tokens if token.strip()}
+    novel = [token for token in corrected_tokens if _normalize_answer(token) not in original_norm]
+    if novel:
+        candidate = " ".join(novel[:2]).strip()
+        return candidate or None
+
+    for index, token in enumerate(corrected_tokens):
+        if index >= len(original_tokens) or _normalize_answer(original_tokens[index]) != _normalize_answer(token):
+            return token
+    return corrected_tokens[-1]
+
+
+def _generic_wrong_variants(corrected: str, focus: str) -> list[str]:
+    sentence = corrected.strip()
+    variants: list[str] = []
+    if not sentence:
+        return variants
+
+    lowered = sentence.lower()
+    if focus == "grammar":
+        if " is " in lowered:
+            variants.append(re.sub(r"\bis\b", "are", sentence, count=1, flags=re.IGNORECASE))
+        if " are " in lowered:
+            variants.append(re.sub(r"\bare\b", "is", sentence, count=1, flags=re.IGNORECASE))
+        if " have " in lowered:
+            variants.append(re.sub(r"\bhave\b", "has", sentence, count=1, flags=re.IGNORECASE))
+        if " has " in lowered:
+            variants.append(re.sub(r"\bhas\b", "have", sentence, count=1, flags=re.IGNORECASE))
+        if " to " in lowered:
+            variants.append(re.sub(r"\bto\b\s+", "", sentence, count=1, flags=re.IGNORECASE))
+    if focus in {"word_choice", "vocabulary"}:
+        if " for " in lowered:
+            variants.append(re.sub(r"\bfor\b", "since", sentence, count=1, flags=re.IGNORECASE))
+        if " in " in lowered:
+            variants.append(re.sub(r"\bin\b", "on", sentence, count=1, flags=re.IGNORECASE))
+        if " on " in lowered:
+            variants.append(re.sub(r"\bon\b", "in", sentence, count=1, flags=re.IGNORECASE))
+    if focus == "speaking" and sentence.endswith("?"):
+        variants.append(sentence.rstrip("?"))
+
+    words = sentence.split()
+    if len(words) > 3:
+        variants.append(" ".join(words[:-1]))
+    return [item.strip() for item in variants if item and _normalize_answer(item) != _normalize_answer(sentence)]
+
+
+def _build_error_based_question(item: ErrorLog, index: int) -> QuizQuestion | None:
+    original = (item.original_text or "").strip()
+    corrected = (item.corrected_text or "").strip()
+    explanation = (item.explanation or "").strip()
+    focus = (item.error_type or "grammar").strip() or "grammar"
+    if not corrected:
+        return None
+
+    answer_phrase = _difference_phrase(original, corrected)
+    if answer_phrase and len(answer_phrase.split()) <= 3:
+        prompt = _replace_first_exact(corrected, answer_phrase)
+        if prompt != corrected and "_____" in prompt:
+            return QuizQuestion(
+                id=f"q{index}",
+                type="fill_blank",
+                prompt=f"Complete the corrected sentence: {prompt}",
+                options=[],
+                correct_answer=answer_phrase,
+                explanation=explanation or "Điền lại đúng phần mà bạn đã sai trong phiên học trước.",
+                focus=focus,
+            )
+
+    distractors = []
+    if original and _normalize_answer(original) != _normalize_answer(corrected):
+        distractors.append(original)
+    distractors.extend(_generic_wrong_variants(corrected, focus))
+
+    options = []
+    seen = set()
+    for candidate in [corrected, *distractors]:
+        normalized = _normalize_answer(candidate)
+        if not candidate or normalized in seen:
+            continue
+        seen.add(normalized)
+        options.append(candidate)
+        if len(options) == 4:
+            break
+
+    while len(options) < 4:
+        filler = f"{corrected.rstrip('.')} please" if len(options) == 2 else f"{corrected.rstrip('.')} yesterday"
+        normalized = _normalize_answer(filler)
+        if normalized not in seen:
+            seen.add(normalized)
+            options.append(filler)
+        else:
+            options.append(f"{corrected.rstrip('.')} now")
+
+    return QuizQuestion(
+        id=f"q{index}",
+        type="multiple_choice",
+        prompt="Choose the better sentence to say.",
+        options=options[:4],
+        correct_answer=corrected,
+        explanation=explanation or "Chọn lại cách nói đúng thay vì lặp lại mẫu sai cũ.",
+        focus=focus,
+    )
+
+
+def _build_result_based_question(item: QuestionResult, index: int) -> QuizQuestion | None:
+    expected = (item.correct_answer or "").strip()
+    prompt = (item.prompt or "").strip()
+    explanation = (item.explanation or "").strip()
+    focus = (item.focus or "grammar").strip() or "grammar"
+    user_answer = (item.user_answer or "").strip()
+    if not expected or not prompt:
+        return None
+
+    if len(expected.split()) <= 4:
+        normalized_prompt = prompt if prompt.endswith("?") else prompt.rstrip(".")
+        return QuizQuestion(
+            id=f"q{index}",
+            type="fill_blank",
+            prompt=f"Review this previous quiz item and type the correct answer: {normalized_prompt}",
+            options=[],
+            correct_answer=expected,
+            explanation=explanation or "Đây là đáp án đúng của câu bạn đã từng làm sai.",
+            focus=focus,
+        )
+
+    options = []
+    seen = set()
+    for candidate in [expected, user_answer, *_generic_wrong_variants(expected, focus)]:
+        normalized = _normalize_answer(candidate)
+        if not candidate or normalized in seen:
+            continue
+        seen.add(normalized)
+        options.append(candidate)
+        if len(options) == 4:
+            break
+    if len(options) < 2:
+        return None
+    while len(options) < 4:
+        filler = f"{expected.rstrip('.')} now"
+        normalized = _normalize_answer(filler)
+        if normalized not in seen:
+            seen.add(normalized)
+            options.append(filler)
+        else:
+            options.append(f"{expected.rstrip('.')} yesterday")
+
+    return QuizQuestion(
+        id=f"q{index}",
+        type="multiple_choice",
+        prompt=f"Review this idea from a previous quiz: {prompt}",
+        options=options[:4],
+        correct_answer=expected,
+        explanation=explanation or "Chọn lại phương án đúng của câu bạn đã từng làm sai.",
+        focus=focus,
+    )
+
+
+def _focus_template_question(focus: str, level: str, index: int) -> QuizQuestion:
+    topic = focus.replace("_", " ")
+    templates = {
+        "grammar": QuizQuestion(
+            id=f"q{index}",
+            type="multiple_choice",
+            prompt=f"Choose the most accurate {level} sentence.",
+            options=[
+                "She has worked here for three years.",
+                "She have worked here for three years.",
+                "She has work here for three years.",
+                "She working here for three years.",
+            ],
+            correct_answer="She has worked here for three years.",
+            explanation="Use 'has + past participle' for the present perfect with 'she'.",
+            focus="grammar",
+        ),
+        "vocabulary": QuizQuestion(
+            id=f"q{index}",
+            type="fill_blank",
+            prompt="Complete the sentence: I am interested _____ joining the English club this semester.",
+            options=[],
+            correct_answer="in",
+            explanation="The fixed expression is 'interested in'.",
+            focus="vocabulary",
+        ),
+        "word_choice": QuizQuestion(
+            id=f"q{index}",
+            type="multiple_choice",
+            prompt="Choose the most natural request.",
+            options=[
+                "Could you explain that part again?",
+                "Could you explain again that part me?",
+                "Explain that part again you could?",
+                "You could explain that part again me?",
+            ],
+            correct_answer="Could you explain that part again?",
+            explanation="This is the most natural and polite way to ask for clarification.",
+            focus="word_choice",
+        ),
+        "speaking": QuizQuestion(
+            id=f"q{index}",
+            type="multiple_choice",
+            prompt="Which answer sounds clearer in conversation?",
+            options=[
+                "I think we should test it first and then decide.",
+                "I think should test first then decide it.",
+                "We should decide it then test first I think.",
+                "Think I should test it and decide then.",
+            ],
+            correct_answer="I think we should test it first and then decide.",
+            explanation="A clear spoken answer keeps the subject and verbs in a natural order.",
+            focus="speaking",
+        ),
+        "comprehension": QuizQuestion(
+            id=f"q{index}",
+            type="fill_blank",
+            prompt="Complete the summary sentence: The main _____ is that students should review after each lesson.",
+            options=[],
+            correct_answer="point",
+            explanation="The fixed phrase is 'the main point'.",
+            focus="comprehension",
+        ),
+        "reading": QuizQuestion(
+            id=f"q{index}",
+            type="multiple_choice",
+            prompt=f"Choose the sentence that best matches a short {topic} task.",
+            options=[
+                "Students must submit the form before Friday noon.",
+                "Students submit the form before Friday noon must.",
+                "Before Friday noon must submit students the form.",
+                "Students before Friday noon submit must the form.",
+            ],
+            correct_answer="Students must submit the form before Friday noon.",
+            explanation="This sentence is the clearest reading-based instruction.",
+            focus="reading",
+        ),
+    }
+    return templates.get(focus, templates["grammar"])
+
+
+def _build_personalized_fallback_questions(
+    errors: list[ErrorLog],
+    wrong_results: list[QuestionResult],
+    learner_profile: LearnerQuizProfile,
+    level: str,
+    count: int,
+) -> list[QuizQuestion]:
+    questions: list[QuizQuestion] = []
+    for item in errors:
+        question = _build_error_based_question(item, len(questions) + 1)
+        if question:
+            questions.append(question)
+        if len(questions) >= count:
+            return questions[:count]
+
+    for item in wrong_results:
+        question = _build_result_based_question(item, len(questions) + 1)
+        if question:
+            questions.append(question)
+        if len(questions) >= count:
+            return questions[:count]
+
+    used_focuses = {question.focus for question in questions}
+    for focus in learner_profile.recommended_focuses or ["grammar", "speaking", "word_choice"]:
+        selected_focus = focus if focus not in used_focuses else "grammar"
+        questions.append(_focus_template_question(selected_focus, level, len(questions) + 1))
+        used_focuses.add(selected_focus)
+        if len(questions) >= count:
+            return questions[:count]
+
+    while len(questions) < count:
+        questions.append(_focus_template_question("grammar", level, len(questions) + 1))
+    return questions[:count]
 
 
 class _ReadableTextParser(HTMLParser):
@@ -943,7 +1261,7 @@ Return structured data only.
             return GeneratedQuiz(
                 title=generated.title or title,
                 description=generated.description,
-                questions=questions,
+                questions=_generated_questions_from_quiz_questions(questions),
             )
     except Exception as exc:
         logger.warning(f"Quiz generation failed, using fallback quiz: {exc}")
@@ -951,7 +1269,112 @@ Return structured data only.
     return GeneratedQuiz(
         title=title,
         description="Practice quiz generated from your current learning focus.",
-        questions=_fallback_questions(req.topic, req.level, req.question_count, focus_text),
+        questions=_generated_questions_from_quiz_questions(
+            _fallback_questions(req.topic, req.level, req.question_count, focus_text)
+        ),
+    )
+
+
+async def _generate_personalized_remedial_quiz(
+    db,
+    user: User,
+    topic: str,
+    level: str,
+    question_count: int,
+) -> GeneratedQuiz:
+    errors = await _recent_errors(db, user.id, limit=max(6, question_count))
+    wrong_results = await _recent_wrong_quiz_results(db, user.id, result_limit=max(6, question_count))
+    learner_profile = await _build_learner_profile(db, user.id)
+
+    if not errors and not wrong_results and learner_profile.attempts_analyzed == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Bạn chưa có đủ dữ liệu lỗi sai. Hãy hoàn thành một phiên học hoặc một bài quiz trước.",
+        )
+
+    focus_lines: list[str] = []
+    if learner_profile.recommended_focuses:
+        focus_lines.append(
+            f"- Priority focuses: {', '.join(item.replace('_', ' ') for item in learner_profile.recommended_focuses[:3])}"
+        )
+    for item in errors[:5]:
+        original = (item.original_text or "").strip()
+        correction = (item.corrected_text or "").strip()
+        explanation = (item.explanation or "").strip()
+        if original and correction:
+            focus_lines.append(f"- Conversation error ({item.error_type}): {original} -> {correction}. {explanation}")
+    for item in wrong_results[:5]:
+        focus_lines.append(
+            f"- Quiz mistake ({item.focus}): prompt={item.prompt!r}; learner_answer={item.user_answer!r}; "
+            f"correct_answer={item.correct_answer!r}; explanation={item.explanation!r}"
+        )
+
+    title = f"Ôn lỗi cá nhân - {datetime.utcnow().strftime('%d/%m %H:%M')}"
+    description = (
+        "Bài ôn cá nhân hóa dựa trên lỗi nói, lỗi quiz gần đây và nhóm kỹ năng còn yếu."
+    )
+    prompt = f"""
+Create a short remedial English quiz for one learner.
+
+Requirements:
+- CEFR level: {level}
+- Topic context: {topic.replace('_', ' ')}
+- Number of questions: {question_count}
+- Use only multiple_choice and fill_blank.
+- Every question must be directly tied to the learner evidence below.
+- At least half of the questions should target actual mistakes the learner made.
+- Focus on repair, not trivia.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- Keep prompts practical for Vietnamese learners and suitable for self-study.
+- Include short explanations that tell the learner what to notice next time.
+
+Learner evidence:
+{chr(10).join(focus_lines) or "- Build a short remedial quiz from recent English practice errors."}
+
+Return structured data only.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.2).with_structured_output(GeneratedQuiz)
+        generated: GeneratedQuiz = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You create tight remedial English quizzes. You repair real learner mistakes, "
+                        "avoid generic filler, and stay close to the evidence."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        questions = []
+        for index, question in enumerate(generated.questions[:question_count], start=1):
+            data = question.model_dump()
+            data["id"] = data.get("id") or f"q{index}"
+            if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+            questions.append(QuizQuestion.model_validate(data))
+        questions = _normalize_questions(questions)
+        if len(questions) >= 3:
+            return GeneratedQuiz(
+                title=generated.title or title,
+                description=generated.description or description,
+                questions=_generated_questions_from_quiz_questions(questions[:question_count]),
+            )
+    except Exception as exc:
+        logger.warning(f"Personalized remedial quiz generation failed, using deterministic fallback: {exc}")
+
+    fallback_questions = _build_personalized_fallback_questions(
+        errors=errors,
+        wrong_results=wrong_results,
+        learner_profile=learner_profile,
+        level=level,
+        count=question_count,
+    )
+    return GeneratedQuiz(
+        title=title,
+        description=description,
+        questions=_generated_questions_from_quiz_questions(fallback_questions),
     )
 
 
@@ -1259,16 +1682,31 @@ async def create_quiz(req: QuizCreateRequest, user: User = Depends(require_role(
 
 
 @router.post("/generate", response_model=QuizResponse)
-async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_role("admin"))):
+async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(get_current_user)):
     factory = get_session_factory()
     async with factory() as db:
-        focus_text = await _recent_error_focus(db, user.id) if req.source == "mistakes" else ""
-        generated = await _generate_quiz(req, focus_text)
+        if user.role != "admin" and req.source != "mistakes":
+            raise HTTPException(status_code=403, detail="Chỉ admin mới được tạo quiz chung từ chủ đề.")
+
+        effective_level = user.cefr_level if user.role == "learner" else req.level
+
+        if req.source == "mistakes":
+            generated = await _generate_personalized_remedial_quiz(
+                db=db,
+                user=user,
+                topic=req.topic,
+                level=effective_level,
+                question_count=req.question_count,
+            )
+        else:
+            focus_text = await _recent_error_focus(db, user.id)
+            generated = await _generate_quiz(req, focus_text)
+
         quiz = Quiz(
             user_id=user.id,
             title=generated.title,
             topic=req.topic,
-            level=req.level,
+            level=effective_level,
             source="mistakes" if req.source == "mistakes" else "ai",
             description=generated.description,
             questions_json=[item.model_dump() for item in generated.questions],
@@ -1299,7 +1737,7 @@ async def list_quizzes(
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(User.role == "admin")
+            .where(or_(User.role == "admin", Quiz.user_id == user.id))
             .order_by(desc(Quiz.created_at))
             .limit(limit)
             .offset(offset)
@@ -1605,7 +2043,7 @@ async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin")))
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(Quiz.id == quiz_id, User.role == "admin")
+            .where(Quiz.id == quiz_id, or_(User.role == "admin", Quiz.user_id == user.id))
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
@@ -1634,7 +2072,7 @@ async def get_admin_quiz(quiz_id: str, user: User = Depends(require_role("admin"
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(Quiz.id == quiz_id, User.role == "admin")
+            .where(Quiz.id == quiz_id, or_(User.role == "admin", Quiz.user_id == user.id))
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
