@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, Shield, Users, Clock, RefreshCw } from "lucide-react";
+import { Search, Shield, Users, Clock, RefreshCw, Trash2 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
-import { getAdminUsers, updateAdminUser, type AdminUser } from "../lib/api";
-import { roleLabel } from "../lib/labels";
+import { deleteAdminUser, getAdminUsers, updateAdminUser, type AdminUser } from "../lib/api";
+import { roleLabel, subscriptionLabel } from "../lib/labels";
 import { useAuthStore } from "../stores/authStore";
 
-type UserDraft = Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role">;
+type UserDraft = Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role" | "subscription_plan">;
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const roles = ["learner", "admin"] as const;
+const plans = ["free", "plus", "ultra"] as const;
 
 function createDraft(user: AdminUser): UserDraft {
   return {
@@ -19,6 +20,7 @@ function createDraft(user: AdminUser): UserDraft {
     native_language: user.native_language,
     cefr_level: user.cefr_level,
     role: user.role,
+    subscription_plan: user.subscription_plan,
   };
 }
 
@@ -33,7 +35,8 @@ function isDirty(user: AdminUser, draft: UserDraft | undefined): boolean {
     draft.name !== user.name ||
     draft.native_language !== user.native_language ||
     draft.cefr_level !== user.cefr_level ||
-    draft.role !== user.role
+    draft.role !== user.role ||
+    draft.subscription_plan !== user.subscription_plan
   );
 }
 
@@ -49,6 +52,7 @@ export default function AdminUsers() {
   const [roleFilter, setRoleFilter] = useState<"all" | "learner" | "admin">("all");
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const loadUsers = useCallback(async () => {
@@ -115,12 +119,34 @@ export default function AdminUsers() {
           native_language: updated.native_language,
           cefr_level: updated.cefr_level,
           role: updated.role,
+          subscription_plan: updated.subscription_plan,
         });
       }
     } catch (err: any) {
       setError(err.message || "Không cập nhật được người dùng");
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const handleDelete = async (user: AdminUser) => {
+    if (!window.confirm(`Xoá người dùng "${user.email}" và toàn bộ dữ liệu liên quan?`)) return;
+
+    setDeletingId(user.id);
+    setError("");
+    try {
+      await deleteAdminUser(user.id);
+      setUsers((current) => current.filter((item) => item.id !== user.id));
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[user.id];
+        return next;
+      });
+      setTotal((value) => Math.max(0, value - 1));
+    } catch (err: any) {
+      setError(err.message || "Không xoá được người dùng");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -290,6 +316,9 @@ export default function AdminUsers() {
                           <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                             {user.cefr_level}
                           </span>
+                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
+                            {subscriptionLabel(user.subscription_plan)}
+                          </span>
                           {isSelf && (
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700">
                               Bạn
@@ -375,9 +404,39 @@ export default function AdminUsers() {
                               </p>
                             )}
                           </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Gói đăng ký</label>
+                            <select
+                              value={draft?.subscription_plan || user.subscription_plan}
+                              onChange={(e) =>
+                                handleDraftChange(user.id, {
+                                  subscription_plan: e.target.value as AdminUser["subscription_plan"],
+                                })
+                              }
+                              className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition bg-white"
+                            >
+                              {plans.map((plan) => (
+                                <option key={plan} value={plan}>
+                                  {subscriptionLabel(plan)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
 
-                        <div className="mt-3 flex items-center justify-end gap-2">
+                        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            type="button"
+                            onClick={() => void handleDelete(user)}
+                            loading={deletingId === user.id}
+                            disabled={isSelf}
+                            icon={<Trash2 className="w-4 h-4" />}
+                          >
+                            Xoá
+                          </Button>
                           <Button
                             size="sm"
                             variant="secondary"

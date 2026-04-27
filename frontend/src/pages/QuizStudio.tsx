@@ -7,6 +7,7 @@ import {
   FilePlus2,
   Globe2,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Sparkles,
@@ -20,9 +21,11 @@ import {
   createQuiz,
   deleteQuiz,
   generateQuiz,
+  getAdminQuiz,
   getQuizzes,
   importQuizzes,
   importQuizzesFromSource,
+  updateQuiz,
   uploadQuizImage,
   type QuizCreateRequest,
   type QuizImportItem,
@@ -297,6 +300,8 @@ export default function QuizStudio() {
   const [importing, setImporting] = useState(false);
   const [sourceImporting, setSourceImporting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
+  const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
   const [uploadingImageFor, setUploadingImageFor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -383,6 +388,12 @@ export default function QuizStudio() {
     );
   };
 
+  const resetManualForm = () => {
+    setEditingQuizId(null);
+    setManualTitle("Bài quiz tiếng Anh theo mục tiêu");
+    setManualQuestions([emptyManualQuestion(1)]);
+  };
+
   const handleQuestionImageUpload = async (index: number, file: File | null) => {
     if (!file) return;
     const question = manualQuestions[index];
@@ -424,15 +435,18 @@ export default function QuizStudio() {
     setError("");
     setActionMessage("");
     try {
-      const quiz = await createQuiz({
+      const payload = {
         title: manualTitle.trim() || "Bài quiz tiếng Anh theo mục tiêu",
         topic,
         level,
-        source: "manual",
         questions: cleaned,
-      });
+      };
+      const quiz = editingQuizId
+        ? await updateQuiz(editingQuizId, payload)
+        : await createQuiz({ ...payload, source: "manual" });
       await loadQuizzes();
-      setActionMessage(`Đã lưu quiz "${quiz.title}".`);
+      setActionMessage(editingQuizId ? `Đã cập nhật quiz "${quiz.title}".` : `Đã lưu quiz "${quiz.title}".`);
+      resetManualForm();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được quiz");
     } finally {
@@ -527,11 +541,44 @@ export default function QuizStudio() {
     try {
       await deleteQuiz(quiz.id);
       await loadQuizzes();
+      if (editingQuizId === quiz.id) {
+        resetManualForm();
+      }
       setActionMessage(`Đã xoá quiz "${quiz.title}".`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không xoá được quiz");
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleEditQuiz = async (quiz: QuizListItem) => {
+    setLoadingEditId(quiz.id);
+    setError("");
+    setActionMessage("");
+    try {
+      const detail = await getAdminQuiz(quiz.id);
+      setEditingQuizId(detail.id);
+      setManualTitle(detail.title);
+      setTopic(detail.topic);
+      setLevel(detail.level);
+      setManualQuestions(
+        detail.questions.map((question, index) => ({
+          id: question.id || `q${index + 1}`,
+          type: question.type,
+          prompt: question.prompt,
+          options: question.type === "multiple_choice" ? [...question.options, "", "", "", ""].slice(0, 4) : [],
+          correct_answer: question.correct_answer,
+          explanation: question.explanation,
+          focus: question.focus,
+          image_url: question.image_url || "",
+        }))
+      );
+      setMode("manual");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tải được quiz để sửa");
+    } finally {
+      setLoadingEditId(null);
     }
   };
 
@@ -653,15 +700,26 @@ export default function QuizStudio() {
                           {quiz.level} · {topicLabel(quiz.topic)} · {quiz.question_count} câu · {formatDate(quiz.created_at)}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        disabled={deletingId === quiz.id}
-                        onClick={() => void handleDeleteQuiz(quiz)}
-                        className="btn-secondary inline-flex items-center justify-center gap-2 text-red-600 hover:bg-red-50 hover:text-red-700"
-                      >
-                        {deletingId === quiz.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                        Xoá
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={loadingEditId === quiz.id}
+                          onClick={() => void handleEditQuiz(quiz)}
+                          className="btn-secondary inline-flex items-center justify-center gap-2"
+                        >
+                          {loadingEditId === quiz.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+                          Sửa
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingId === quiz.id}
+                          onClick={() => void handleDeleteQuiz(quiz)}
+                          className="btn-secondary inline-flex items-center justify-center gap-2 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        >
+                          {deletingId === quiz.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          Xoá
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -857,6 +915,26 @@ export default function QuizStudio() {
                 </div>
               ) : mode === "manual" ? (
                 <div className="mt-5 space-y-4">
+                  {editingQuizId && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <Badge variant="info">Đang sửa quiz</Badge>
+                          <p className="mt-2 text-sm text-blue-900">
+                            Lưu form này sẽ cập nhật bộ đề đang chọn, không tạo quiz mới.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetManualForm}
+                          className="btn-secondary inline-flex items-center justify-center"
+                        >
+                          Huỷ sửa
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <label className="block">
                     <span className="field-label">Tiêu đề</span>
                     <input
@@ -995,7 +1073,7 @@ export default function QuizStudio() {
                       className="btn-primary inline-flex flex-1 items-center justify-center gap-2"
                     >
                       {savingManual ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Lưu quiz
+                      {editingQuizId ? "Cập nhật quiz" : "Lưu quiz"}
                     </button>
                   </div>
                 </div>

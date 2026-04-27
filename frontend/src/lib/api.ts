@@ -293,6 +293,10 @@ export interface QuizResponse {
   created_at: string;
 }
 
+export interface QuizAdminResponse extends Omit<QuizResponse, "questions"> {
+  questions: Array<QuizQuestion & { correct_answer: string }>;
+}
+
 export interface QuizListItem {
   id: string;
   title: string;
@@ -423,9 +427,20 @@ export async function getQuiz(quizId: string): Promise<QuizResponse> {
   return apiFetch<QuizResponse>(`${API_BASE}/quizzes/${quizId}`);
 }
 
+export async function getAdminQuiz(quizId: string): Promise<QuizAdminResponse> {
+  return apiFetch<QuizAdminResponse>(`${API_BASE}/quizzes/${quizId}/admin`);
+}
+
 export async function createQuiz(data: QuizCreateRequest): Promise<QuizResponse> {
   return apiFetch<QuizResponse>(`${API_BASE}/quizzes`, {
     method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateQuiz(quizId: string, data: Omit<QuizCreateRequest, "source">): Promise<QuizAdminResponse> {
+  return apiFetch<QuizAdminResponse>(`${API_BASE}/quizzes/${quizId}`, {
+    method: "PUT",
     body: JSON.stringify(data),
   });
 }
@@ -491,6 +506,7 @@ export interface AdminUser {
   native_language: string;
   cefr_level: string;
   role: AuthUser["role"];
+  subscription_plan: AuthUser["subscription_plan"];
   created_at: string;
   updated_at: string;
   session_count: number;
@@ -525,11 +541,17 @@ export async function getAdminUsers(params: {
 
 export async function updateAdminUser(
   userId: string,
-  data: Partial<Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role">>
+  data: Partial<Pick<AdminUser, "name" | "native_language" | "cefr_level" | "role" | "subscription_plan">>
 ): Promise<AdminUser> {
   return apiFetch<AdminUser>(`${API_BASE}/admin/users/${userId}`, {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAdminUser(userId: string): Promise<void> {
+  return apiFetch<void>(`${API_BASE}/admin/users/${userId}`, {
+    method: "DELETE",
   });
 }
 
@@ -541,6 +563,76 @@ export async function claimAdminAccess(): Promise<AuthUser> {
   return apiFetch<AuthUser>(`${API_BASE}/admin/bootstrap`, {
     method: "POST",
     body: JSON.stringify({}),
+  });
+}
+
+// ── Billing API ─────────────────────────────────────────────────
+
+export type SubscriptionPlan = "free" | "plus" | "ultra";
+export type PaymentStatus = "pending" | "approved" | "rejected";
+
+export interface PlanInfo {
+  code: SubscriptionPlan;
+  name: string;
+  price_vnd: number;
+  chat_limit: number | null;
+  quiz_limit: number | null;
+  description: string;
+}
+
+export interface BillingStatus {
+  subscription_plan: SubscriptionPlan;
+  plan_name: string;
+  chat_limit: number | null;
+  quiz_limit: number | null;
+  chat_used_today: number;
+  quiz_used_today: number;
+}
+
+export interface PaymentRequestInfo {
+  id: string;
+  user_id: string;
+  user_email?: string | null;
+  user_name?: string | null;
+  plan: SubscriptionPlan;
+  amount_vnd: number;
+  status: PaymentStatus;
+  qr_payload: string;
+  admin_note?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getPlans(): Promise<PlanInfo[]> {
+  return apiFetch<PlanInfo[]>(`${API_BASE}/billing/plans`, {}, false);
+}
+
+export async function getBillingStatus(): Promise<BillingStatus> {
+  return apiFetch<BillingStatus>(`${API_BASE}/billing/me`);
+}
+
+export async function getMyPaymentRequests(): Promise<PaymentRequestInfo[]> {
+  return apiFetch<PaymentRequestInfo[]>(`${API_BASE}/billing/payment-requests`);
+}
+
+export async function createPaymentRequest(plan: Exclude<SubscriptionPlan, "free">): Promise<PaymentRequestInfo> {
+  return apiFetch<PaymentRequestInfo>(`${API_BASE}/billing/payment-requests`, {
+    method: "POST",
+    body: JSON.stringify({ plan }),
+  });
+}
+
+export async function getAdminPayments(): Promise<PaymentRequestInfo[]> {
+  return apiFetch<PaymentRequestInfo[]>(`${API_BASE}/admin/payments`);
+}
+
+export async function updateAdminPayment(
+  paymentId: string,
+  data: { status: PaymentStatus; admin_note?: string }
+): Promise<PaymentRequestInfo> {
+  return apiFetch<PaymentRequestInfo>(`${API_BASE}/admin/payments/${paymentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
   });
 }
 

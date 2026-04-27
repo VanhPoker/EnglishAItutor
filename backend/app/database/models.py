@@ -22,6 +22,7 @@ class User(Base):
     native_language: Mapped[str] = mapped_column(String(50), default="vi")
     cefr_level: Mapped[str] = mapped_column(String(2), default="B1")
     role: Mapped[str] = mapped_column(String(32), default="learner", server_default="learner")
+    subscription_plan: Mapped[str] = mapped_column(String(32), default="free", server_default="free")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -121,3 +122,17 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="refresh_tokens")
+
+
+class PaymentRequest(Base):
+    __tablename__ = "payment_requests"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount_vnd: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", server_default="pending", nullable=False)
+    qr_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

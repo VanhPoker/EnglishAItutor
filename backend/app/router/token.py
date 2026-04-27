@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.core.auth import require_role
 from app.core.settings import settings
+from app.core.subscriptions import assert_quota_available
 from app.database.models import User
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def create_token(user_id: str, user_name: str, topic: str | None, level: str | N
 @router.post("/token", response_model=TokenResponse)
 async def get_token(request: TokenRequest, user: User = Depends(require_role("learner"))):
     try:
+        await assert_quota_available(user, "chat")
         result = create_token(
             user_id=user.id,
             user_name=user.name,
@@ -81,6 +83,8 @@ async def get_token(request: TokenRequest, user: User = Depends(require_role("le
             level=request.level or user.cefr_level,
         )
         return TokenResponse(**result)
+    except HTTPException:
+        raise
     except Exception as error:
         logger.error(f"Error creating token: {error}")
         raise HTTPException(status_code=500, detail=str(error))
@@ -90,8 +94,11 @@ async def get_token(request: TokenRequest, user: User = Depends(require_role("le
 async def get_token_default(user: User = Depends(require_role("learner"))):
     """Quick token for development/testing."""
     try:
+        await assert_quota_available(user, "chat")
         result = create_token(user.id, user.name, "free_conversation", user.cefr_level)
         return result
+    except HTTPException:
+        raise
     except Exception as error:
         logger.error(f"Error creating token: {error}")
         raise HTTPException(status_code=500, detail=str(error))

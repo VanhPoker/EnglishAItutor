@@ -22,6 +22,7 @@ from sqlalchemy import delete, desc, select
 from app.core.auth import get_current_user, require_role
 from app.core.llm import get_model
 from app.core.settings import settings
+from app.core.subscriptions import assert_quota_available
 from app.database.connection import get_session_factory
 from app.database.models import ErrorLog, Quiz, QuizAttempt, User
 
@@ -162,6 +163,18 @@ class QuizResponse(BaseModel):
     question_count: int
     questions: list[QuizQuestionPublic]
     created_at: datetime
+
+
+class QuizAdminResponse(QuizResponse):
+    questions: list[QuizQuestion]
+
+
+class QuizUpdateRequest(BaseModel):
+    title: str = "English practice quiz"
+    topic: str = "free_conversation"
+    level: str = "B1"
+    description: Optional[str] = None
+    questions: list[QuizQuestion] = Field(default_factory=list)
 
 
 class QuizListItem(BaseModel):
@@ -332,6 +345,12 @@ def _quiz_response(quiz: Quiz) -> QuizResponse:
         questions=questions,
         created_at=quiz.created_at,
     )
+
+
+def _quiz_admin_response(quiz: Quiz) -> QuizAdminResponse:
+    questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
+    base = _quiz_response(quiz)
+    return QuizAdminResponse(**base.model_dump(exclude={"questions"}), questions=questions)
 
 
 def _fallback_questions(topic: str, level: str, count: int, focus_text: str) -> list[QuizQuestion]:
@@ -1241,6 +1260,50 @@ async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin")))
         return Response(status_code=204)
 
 
+@router.get("/{quiz_id}/admin", response_model=QuizAdminResponse)
+async def get_admin_quiz(quiz_id: str, user: User = Depends(require_role("admin"))):
+    del user
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await db.execute(
+            select(Quiz)
+            .join(User, Quiz.user_id == User.id)
+            .where(Quiz.id == quiz_id, User.role == "admin")
+        )
+        quiz = result.scalar_one_or_none()
+        if not quiz:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+        return _quiz_admin_response(quiz)
+
+
+@router.put("/{quiz_id}", response_model=QuizAdminResponse)
+async def update_quiz(quiz_id: str, req: QuizUpdateRequest, user: User = Depends(require_role("admin"))):
+    del user
+    questions = _normalize_questions(req.questions)
+    if len(questions) < 1:
+        raise HTTPException(status_code=422, detail="At least one question is required")
+
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await db.execute(
+            select(Quiz)
+            .join(User, Quiz.user_id == User.id)
+            .where(Quiz.id == quiz_id, User.role == "admin")
+        )
+        quiz = result.scalar_one_or_none()
+        if not quiz:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+
+        quiz.title = req.title.strip() or quiz.title
+        quiz.topic = req.topic
+        quiz.level = req.level
+        quiz.description = req.description
+        quiz.questions_json = [question.model_dump() for question in questions]
+        await db.commit()
+        await db.refresh(quiz)
+        return _quiz_admin_response(quiz)
+
+
 @router.get("/{quiz_id}", response_model=QuizResponse)
 async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
     del user
@@ -1259,6 +1322,7 @@ async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
 
 @router.post("/{quiz_id}/submit", response_model=QuizAttemptResponse)
 async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(require_role("learner"))):
+    await assert_quota_available(user, "quiz")
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(

@@ -3,6 +3,7 @@ import {
   BarChart3,
   BookOpen,
   ClipboardCheck,
+  CreditCard,
   Home,
   ListChecks,
   LogOut,
@@ -28,12 +29,14 @@ const learnerItems = [
     icon: ListChecks,
     matches: ["/quizzes", "/quiz-results"],
   },
+  { path: "/billing", label: "Gói học", icon: CreditCard, matches: ["/billing"] },
   { path: "/dashboard", label: "Tiến độ", icon: BarChart3, matches: ["/dashboard"] },
 ];
 
 const adminItems = [
   { path: "/admin", label: "Tổng quan", icon: ShieldCheck, matches: ["/admin"] },
   { path: "/admin/quizzes", label: "Kho quiz", icon: ListChecks, matches: ["/admin/quizzes"] },
+  { path: "/admin/payments", label: "Thanh toán", icon: CreditCard, matches: ["/admin/payments"] },
   { path: "/admin/users", label: "Người dùng", icon: Users, matches: ["/admin/users"] },
 ];
 

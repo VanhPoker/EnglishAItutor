@@ -18,6 +18,7 @@ load_dotenv()
 from app.core.settings import settings
 from app.router.admin import router as admin_router
 from app.router.auth import router as auth_router
+from app.router.billing import router as billing_router
 from app.router.quizzes import router as quizzes_router
 from app.router.sessions import router as sessions_router
 from app.router.token import router as token_router
@@ -40,6 +41,7 @@ app.mount("/media", StaticFiles(directory=str(media_root)), name="media")
 
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(admin_router, prefix="/api")
+app.include_router(billing_router, prefix="/api")
 app.include_router(quizzes_router, prefix="/api")
 app.include_router(sessions_router, prefix="/api")
 app.include_router(token_router, prefix="/api")

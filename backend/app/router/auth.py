@@ -119,6 +119,7 @@ class AuthUser(BaseModel):
     native_language: str
     cefr_level: CEFRLevel
     role: UserRole
+    subscription_plan: Literal["free", "plus", "ultra"] = "free"
 
 
 class AuthResponse(BaseModel):
@@ -165,6 +166,7 @@ def _user_dict(user: User) -> dict:
         "native_language": user.native_language,
         "cefr_level": user.cefr_level,
         "role": user.role,
+        "subscription_plan": user.subscription_plan or "free",
     }
 
 

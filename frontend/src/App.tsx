@@ -8,13 +8,16 @@ import Home from "./pages/Home";
 import Practice from "./pages/Practice";
 import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminPayments from "./pages/AdminPayments";
 import AdminUsers from "./pages/AdminUsers";
+import Billing from "./pages/Billing";
 import Review from "./pages/Review";
 import QuizResult from "./pages/QuizResult";
 import LearnerQuizzes from "./pages/LearnerQuizzes";
 import QuizStudio from "./pages/QuizStudio";
 import QuizTake from "./pages/QuizTake";
 import Login from "./pages/Login";
+import LandingPage from "./pages/LandingPage";
 
 function FullScreenLoader() {
   return (
@@ -72,6 +75,17 @@ function RoleRedirect() {
   return <Navigate to={isAuthenticated ? homePathForRole(user) : "/login"} replace />;
 }
 
+function RootRoute() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isBootstrapped = useAuthStore((s) => s.isBootstrapped);
+  const user = useAuthStore((s) => s.user);
+
+  if (!isBootstrapped) return <FullScreenLoader />;
+  if (!isAuthenticated) return <LandingPage />;
+  if (user?.role === "admin") return <Navigate to="/admin" replace />;
+  return <Home />;
+}
+
 export default function App() {
   const user = useAuthStore((s) => s.user);
   const setUser = useUserStore((s) => s.setUser);
@@ -99,11 +113,7 @@ export default function App() {
       />
       <Route
         path="/"
-        element={
-          <LearnerRoute>
-            <Home />
-          </LearnerRoute>
-        }
+        element={<RootRoute />}
       />
       <Route
         path="/practice"
@@ -118,6 +128,14 @@ export default function App() {
         element={
           <LearnerRoute>
             <Dashboard />
+          </LearnerRoute>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <LearnerRoute>
+            <Billing />
           </LearnerRoute>
         }
       />
@@ -174,6 +192,14 @@ export default function App() {
         element={
           <AdminRoute>
             <AdminUsers />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/payments"
+        element={
+          <AdminRoute>
+            <AdminPayments />
           </AdminRoute>
         }
       />
