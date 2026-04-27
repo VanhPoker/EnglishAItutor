@@ -40,6 +40,8 @@ services:
       - "8080:8080"
     env_file:
       - ./backend/.env
+    volumes:
+      - quiz_uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,3 +82,4 @@ services:
 
 volumes:
   pgdata:
+  quiz_uploads:

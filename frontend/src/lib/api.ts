@@ -41,12 +41,18 @@ function shouldAttemptRefresh(url: string): boolean {
 }
 
 async function apiFetch<T>(url: string, opts: RequestInit = {}, retryOnAuth = true): Promise<T> {
+  const defaultHeaders: Record<string, string> = {
+    ...authHeaders(),
+  };
+  if (!(opts.body instanceof FormData)) {
+    defaultHeaders["Content-Type"] = "application/json";
+  }
+
   const res = await fetch(url, {
     credentials: "include",
     ...opts,
     headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
+      ...defaultHeaders,
       ...opts.headers,
     },
   });
@@ -272,6 +278,7 @@ export interface QuizQuestion {
   options: string[];
   explanation: string;
   focus: string;
+  image_url?: string | null;
 }
 
 export interface QuizResponse {
@@ -329,6 +336,11 @@ export interface QuizImportResponse {
   quizzes: QuizListItem[];
 }
 
+export interface QuizImageUploadResponse {
+  url: string;
+  file_name: string;
+}
+
 export interface QuestionResult {
   question_id: string;
   prompt: string;
@@ -337,6 +349,7 @@ export interface QuestionResult {
   correct_answer: string;
   is_correct: boolean;
   explanation: string;
+  image_url?: string | null;
 }
 
 export interface QuizReview {
@@ -404,6 +417,15 @@ export async function importQuizzes(quizzes: QuizImportItem[]): Promise<QuizImpo
   return apiFetch<QuizImportResponse>(`${API_BASE}/quizzes/import`, {
     method: "POST",
     body: JSON.stringify({ quizzes }),
+  });
+}
+
+export async function uploadQuizImage(file: File): Promise<QuizImageUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<QuizImageUploadResponse>(`${API_BASE}/quizzes/upload-image`, {
+    method: "POST",
+    body: formData,
   });
 }
 

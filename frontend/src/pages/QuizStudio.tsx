@@ -24,6 +24,7 @@ import {
   generateQuiz,
   getQuizzes,
   importQuizzes,
+  uploadQuizImage,
   type QuizCreateRequest,
   type QuizImportItem,
   type QuizListItem,
@@ -55,6 +56,7 @@ function emptyManualQuestion(index: number): ManualQuestion {
     correct_answer: "",
     explanation: "",
     focus: "grammar",
+    image_url: "",
   };
 }
 
@@ -157,6 +159,7 @@ function normalizeQuestion(raw: any, index: number): ManualQuestion | null {
     correct_answer: correctAnswer,
     explanation: String(raw.explanation || raw.explain || "").trim(),
     focus: String(raw.focus || raw.skill || "grammar").trim() || "grammar",
+    image_url: String(raw.image_url || raw.image || raw.image_link || raw.prompt_image || "").trim(),
   };
 }
 
@@ -210,6 +213,7 @@ function parseCsvImport(text: string, fallbackTopic: string, fallbackLevel: stri
         id: firstValue(row, ["id", "question_id"]) || `q${rowIndex + 1}`,
         type: firstValue(row, ["type", "question_type"]),
         prompt: firstValue(row, ["prompt", "question", "question_text"]),
+        image_url: firstValue(row, ["image_url", "image", "image_link", "prompt_image"]),
         options: firstValue(row, ["options"]),
         option_a: firstValue(row, ["option_a", "option_1", "a"]),
         option_b: firstValue(row, ["option_b", "option_2", "b"]),
@@ -255,6 +259,7 @@ export default function QuizStudio() {
   const [generating, setGenerating] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [uploadingImageFor, setUploadingImageFor] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const [mode, setMode] = useState<Mode>("generate");
@@ -332,6 +337,21 @@ export default function QuizStudio() {
     );
   };
 
+  const handleQuestionImageUpload = async (index: number, file: File | null) => {
+    if (!file) return;
+    const question = manualQuestions[index];
+    setUploadingImageFor(question.id);
+    setError("");
+    try {
+      const uploaded = await uploadQuizImage(file);
+      updateManualQuestion(index, { image_url: uploaded.url });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tải được ảnh câu hỏi");
+    } finally {
+      setUploadingImageFor(null);
+    }
+  };
+
   const handleManualSave = async () => {
     const cleaned = manualQuestions
       .map((question, index) => ({
@@ -345,6 +365,7 @@ export default function QuizStudio() {
         correct_answer: question.correct_answer.trim(),
         explanation: question.explanation.trim(),
         focus: question.focus.trim() || "grammar",
+        image_url: question.image_url?.trim() || undefined,
       }))
       .filter((question) => question.prompt && question.correct_answer);
 
@@ -420,8 +441,8 @@ export default function QuizStudio() {
 
   const downloadSampleCsv = () => {
     const sample = [
-      "quiz_title,topic,level,type,prompt,option_a,option_b,option_c,option_d,correct_answer,explanation,focus",
-      '"Basic Grammar A2",daily_life,A2,multiple_choice,"Choose the correct sentence.","She goes to school.","She go to school.","She going to school.","She gone to school.",A,"Use goes with she/he/it.","grammar"',
+      "quiz_title,topic,level,type,prompt,image_url,option_a,option_b,option_c,option_d,correct_answer,explanation,focus",
+      '"Basic Grammar A2",daily_life,A2,multiple_choice,"Choose the correct sentence.","https://example.com/classroom.jpg","She goes to school.","She go to school.","She going to school.","She gone to school.",A,"Use goes with she/he/it.","grammar"',
       '"Basic Grammar A2",daily_life,A2,fill_blank,"Complete: I have lived here ___ 2020.",,,,,since,"Use since with a starting point.","grammar"',
     ].join("\n");
     const blob = new Blob([sample], { type: "text/csv;charset=utf-8" });
@@ -704,6 +725,52 @@ export default function QuizStudio() {
                           className="field"
                         />
 
+                        <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto]">
+                          <input
+                            value={question.image_url || ""}
+                            onChange={(event) => updateManualQuestion(index, { image_url: event.target.value })}
+                            placeholder="URL ảnh minh hoạ (nếu có)"
+                            className="field"
+                          />
+                          <label className="btn-secondary inline-flex cursor-pointer items-center justify-center gap-2">
+                            {uploadingImageFor === question.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Upload className="h-4 w-4" />
+                            )}
+                            Tải ảnh
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/gif"
+                              className="hidden"
+                              onChange={(event) => {
+                                void handleQuestionImageUpload(index, event.target.files?.[0] || null);
+                                event.currentTarget.value = "";
+                              }}
+                            />
+                          </label>
+                        </div>
+
+                        {question.image_url && (
+                          <div className="mt-3 overflow-hidden rounded-lg border border-gray-200">
+                            <img
+                              src={question.image_url}
+                              alt={`Minh hoạ câu ${index + 1}`}
+                              className="h-48 w-full object-cover"
+                            />
+                            <div className="flex items-center justify-between bg-gray-50 px-3 py-2">
+                              <span className="truncate text-xs text-gray-500">{question.image_url}</span>
+                              <button
+                                type="button"
+                                onClick={() => updateManualQuestion(index, { image_url: "" })}
+                                className="text-xs font-semibold text-red-600 hover:text-red-700"
+                              >
+                                Gỡ ảnh
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {question.type === "multiple_choice" && (
                           <div className="mt-2 grid grid-cols-2 gap-2">
                             {question.options.map((option, optionIndex) => (
@@ -783,12 +850,13 @@ export default function QuizStudio() {
                     <p className="text-sm font-semibold text-gray-900">Định dạng hỗ trợ</p>
                     <ul className="mt-2 space-y-1 text-sm text-gray-500">
                       <li>
-                        CSV: <code>quiz_title, topic, level, type, prompt, option_a...option_d, correct_answer, explanation, focus</code>.
+                        CSV: <code>quiz_title, topic, level, type, prompt, image_url, option_a...option_d, correct_answer, explanation, focus</code>.
                       </li>
                       <li>
                         JSON: object có <code>quizzes</code>, hoặc một quiz đơn có <code>questions</code>.
                       </li>
                       <li>Đáp án trắc nghiệm có thể là nội dung đáp án hoặc ký tự A/B/C/D.</li>
+                      <li>Mỗi câu hỏi có thể có thêm <code>image_url</code> để hiển thị ảnh minh hoạ.</li>
                     </ul>
                   </div>
 

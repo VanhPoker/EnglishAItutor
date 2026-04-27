@@ -330,6 +330,15 @@ export default function QuizResult() {
                           </Badge>
                           <Badge>{focusLabel(item.focus)}</Badge>
                         </div>
+                        {item.image_url && (
+                          <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                            <img
+                              src={item.image_url}
+                              alt={`Minh hoạ cho câu ${index + 1}`}
+                              className="max-h-[280px] w-full object-contain"
+                            />
+                          </div>
+                        )}
                         <p className="font-medium leading-6 text-gray-900">{item.prompt}</p>
                       </div>
                       <span className="text-xs font-semibold text-gray-400">#{index + 1}</span>
