@@ -336,6 +336,30 @@ export interface QuizImportResponse {
   quizzes: QuizListItem[];
 }
 
+export type QuizSourcePreset =
+  | "cefr_core"
+  | "wikibooks_grammar"
+  | "tatoeba_sentences"
+  | "thpt_2025_format"
+  | "custom_url";
+
+export interface QuizSourceImportRequest {
+  preset: QuizSourcePreset;
+  source_url?: string;
+  topic: string;
+  level: string;
+  quiz_count: number;
+  questions_per_quiz: number;
+  focus?: string;
+}
+
+export interface QuizSourceImportResponse extends QuizImportResponse {
+  source_title: string;
+  source_url?: string | null;
+  license: string;
+  attribution: string;
+}
+
 export interface QuizImageUploadResponse {
   url: string;
   file_name: string;
@@ -417,6 +441,15 @@ export async function importQuizzes(quizzes: QuizImportItem[]): Promise<QuizImpo
   return apiFetch<QuizImportResponse>(`${API_BASE}/quizzes/import`, {
     method: "POST",
     body: JSON.stringify({ quizzes }),
+  });
+}
+
+export async function importQuizzesFromSource(
+  data: QuizSourceImportRequest
+): Promise<QuizSourceImportResponse> {
+  return apiFetch<QuizSourceImportResponse>(`${API_BASE}/quizzes/source-import`, {
+    method: "POST",
+    body: JSON.stringify(data),
   });
 }
 
