@@ -26,6 +26,7 @@ from app.core.settings import settings
 from app.core.subscriptions import assert_quota_available
 from app.database.connection import get_session_factory
 from app.database.models import ErrorLog, Quiz, QuizAttempt, QuizSet, User
+from app.utils.curated_quiz_sets import CURATED_OPEN_QUIZ_SETS
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
@@ -251,6 +252,19 @@ class QuizSourceImportResponse(QuizImportResponse):
     source_url: Optional[str] = None
     license: str
     attribution: str
+
+
+class CuratedQuizSyncRequest(BaseModel):
+    replace_existing: bool = True
+
+
+class CuratedQuizSyncResponse(BaseModel):
+    deleted_quiz_count: int
+    deleted_set_count: int
+    imported_quiz_count: int
+    imported_set_count: int
+    question_count: int
+    sets: list[QuizSetDetailResponse]
 
 
 class QuizImageUploadResponse(BaseModel):
@@ -669,92 +683,144 @@ def _source_info(req: QuizSourceImportRequest) -> dict:
     }
 
 
-def _source_fallback_quizzes(req: QuizSourceImportRequest, info: dict) -> list[QuizImportItem]:
-    topic_display = req.topic.replace("_", " ")
-    focus = (req.focus or "grammar, vocabulary, reading comprehension").strip()
-    templates = [
-        QuizQuestion(
-            id="q1",
-            type="multiple_choice",
-            prompt=f"Choose the most natural {req.level} sentence about {topic_display}.",
-            options=[
-                "I would like to talk about this topic.",
-                "I would like talk about this topic.",
-                "I like to talking about this topic.",
-                "I am like talk about this topic.",
-            ],
-            correct_answer="I would like to talk about this topic.",
-            explanation="Use 'would like to' before the base verb.",
-            focus="grammar",
-        ),
-        QuizQuestion(
-            id="q2",
-            type="fill_blank",
-            prompt="Complete the sentence: This source is useful ___ English practice.",
-            correct_answer="for",
-            explanation="Use 'useful for' before a noun or gerund phrase.",
-            focus="vocabulary",
-        ),
-        QuizQuestion(
-            id="q3",
-            type="multiple_choice",
-            prompt="Which sentence keeps the meaning clear and polite?",
-            options=[
-                "Could you explain the answer again?",
-                "Explain answer again you?",
-                "You can explain answer?",
-                "Again the answer explain?",
-            ],
-            correct_answer="Could you explain the answer again?",
-            explanation="This is a polite request form.",
-            focus="speaking",
-        ),
-        QuizQuestion(
-            id="q4",
-            type="multiple_choice",
-            prompt=f"What should a {req.level} learner do after making a mistake?",
-            options=[
-                "Review the correction and use it in a new sentence.",
-                "Ignore the correction completely.",
-                "Memorize only the answer letter.",
-                "Stop practicing the topic.",
-            ],
-            correct_answer="Review the correction and use it in a new sentence.",
-            explanation="Active reuse helps the learner remember the pattern.",
-            focus="comprehension",
-        ),
-        QuizQuestion(
-            id="q5",
-            type="fill_blank",
-            prompt="Complete: I need more practice ___ this grammar point.",
-            correct_answer="with",
-            explanation="Use 'practice with' for a skill or topic.",
-            focus="word_choice",
-        ),
-    ]
-    quizzes = []
-    for index in range(req.quiz_count):
-        questions = []
-        for q_index in range(1, req.questions_per_quiz + 1):
-            question = templates[(q_index - 1) % len(templates)]
-            data = question.model_dump()
-            data["id"] = f"q{q_index}"
-            if q_index > len(templates):
-                data["prompt"] = f"{data['prompt']} ({q_index})"
-            questions.append(QuizQuestion.model_validate(data))
-        quizzes.append(
+def _curated_import_items(seed: dict) -> list[QuizImportItem]:
+    items: list[QuizImportItem] = []
+    for index, raw_quiz in enumerate(seed.get("quizzes", []), start=1):
+        questions = _normalize_questions(
+            [QuizQuestion.model_validate(question) for question in raw_quiz.get("questions", [])]
+        )
+        if len(questions) < 3:
+            continue
+        items.append(
             QuizImportItem(
-                title=f"{info['title']} - {req.level} #{index + 1}",
-                topic=req.topic,
-                level=req.level,
-                description=f"Nguồn: {info['attribution']}. Trọng tâm: {focus}.",
+                title=(raw_quiz.get("title") or f"{seed['title']} #{index}").strip(),
+                topic=(raw_quiz.get("topic") or seed.get("topic") or "daily_life").strip(),
+                level=(raw_quiz.get("level") or seed.get("level") or "B1").strip(),
+                description=(raw_quiz.get("description") or "").strip() or None,
                 questions=questions,
             )
         )
-    return quizzes
+    return items
+
+
+async def _replace_open_source_library(db) -> tuple[int, int]:
+    quiz_rows = (
+        await db.execute(
+            select(Quiz.id, Quiz.quiz_set_id)
+            .where(Quiz.source == "open_source")
+        )
+    ).all()
+    quiz_ids = [row[0] for row in quiz_rows]
+    set_ids = {row[1] for row in quiz_rows if row[1]}
+
+    explicit_set_ids = (
+        await db.execute(select(QuizSet.id).where(QuizSet.source == "open_source"))
+    ).scalars().all()
+    set_ids.update(explicit_set_ids)
+
+    if quiz_ids:
+        await db.execute(delete(QuizAttempt).where(QuizAttempt.quiz_id.in_(quiz_ids)))
+        await db.execute(delete(Quiz).where(Quiz.id.in_(quiz_ids)))
+
+    if set_ids:
+        await db.execute(delete(QuizSet).where(QuizSet.id.in_(set_ids)))
+
+    return len(quiz_ids), len(set_ids)
+
+
+async def _sync_curated_open_source_sets(user: User, replace_existing: bool) -> CuratedQuizSyncResponse:
+    factory = get_session_factory()
+    async with factory() as db:
+        deleted_quiz_count = 0
+        deleted_set_count = 0
+        if replace_existing:
+            deleted_quiz_count, deleted_set_count = await _replace_open_source_library(db)
+
+        created_sets: list[QuizSet] = []
+        created_quizzes: list[Quiz] = []
+        total_questions = 0
+
+        for seed in CURATED_OPEN_QUIZ_SETS:
+            items = _curated_import_items(seed)
+            if not items:
+                continue
+
+            quiz_set = QuizSet(
+                created_by=user.id,
+                title=seed["title"],
+                description=seed.get("description"),
+                source="open_source",
+                source_preset=seed.get("source_preset"),
+                source_title=seed.get("source_title"),
+                source_url=seed.get("source_url"),
+                license=seed.get("license"),
+                attribution=seed.get("attribution"),
+                topic=seed.get("topic") or items[0].topic,
+                level=seed.get("level") or items[0].level,
+            )
+            db.add(quiz_set)
+
+            source_note = f"Nguồn: {seed['attribution']}. License: {seed['license']}"
+            created_for_set = 0
+            for item in items:
+                questions = _normalize_questions(item.questions)
+                if len(questions) < 3:
+                    continue
+                total_questions += len(questions)
+                description = (item.description or "").strip()
+                if source_note not in description:
+                    description = f"{description}\n{source_note}".strip()
+                quiz = Quiz(
+                    user_id=user.id,
+                    quiz_set=quiz_set,
+                    title=item.title,
+                    topic=item.topic,
+                    level=item.level,
+                    source="open_source",
+                    description=description,
+                    questions_json=[question.model_dump() for question in questions],
+                )
+                db.add(quiz)
+                created_quizzes.append(quiz)
+                created_for_set += 1
+
+            if created_for_set:
+                created_sets.append(quiz_set)
+
+        if not created_sets:
+            raise HTTPException(status_code=422, detail="Không có bộ quiz curated hợp lệ để import.")
+
+        await db.commit()
+        for quiz_set in created_sets:
+            await db.refresh(quiz_set)
+        for quiz in created_quizzes:
+            await db.refresh(quiz)
+
+    set_details: list[QuizSetDetailResponse] = []
+    for quiz_set in created_sets:
+        quizzes = [_quiz_list_item(quiz, user) for quiz in created_quizzes if quiz.quiz_set_id == quiz_set.id]
+        set_details.append(_quiz_set_response(quiz_set, quizzes, user))
+
+    return CuratedQuizSyncResponse(
+        deleted_quiz_count=deleted_quiz_count,
+        deleted_set_count=deleted_set_count,
+        imported_quiz_count=len(created_quizzes),
+        imported_set_count=len(created_sets),
+        question_count=total_questions,
+        sets=set_details,
+    )
 
 
 async def _generate_source_quizzes(req: QuizSourceImportRequest, info: dict, source_text: str) -> list[QuizImportItem]:
+    if not (source_text or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Không đọc được nội dung từ nguồn {info['title']}. "
+                "Hãy thử URL khác, giảm bớt mục tiêu, hoặc dùng import file để đưa đề thật vào hệ thống."
+            ),
+        )
+
     topic_display = req.topic.replace("_", " ")
     prompt = f"""
 Create a batch of original English learner quizzes for this app.
@@ -781,9 +847,11 @@ Rules:
 - For fill_blank, provide no options and a short correct_answer.
 - Keep questions useful for Vietnamese learners of English.
 - Use focus labels like grammar, vocabulary, word_choice, structure, comprehension, speaking.
+- Do not return generic placeholder questions.
+- Every quiz should contain concrete, source-grounded language practice.
 
 Source excerpt:
-{source_text or '(No source excerpt available; use preset guidance only.)'}
+{source_text}
 
 Return structured data only.
 """
@@ -815,15 +883,26 @@ Return structured data only.
                         questions=questions[: req.questions_per_quiz],
                     )
                 )
-        if quizzes:
-            if len(quizzes) >= req.quiz_count:
-                return quizzes[: req.quiz_count]
-            fallback = _source_fallback_quizzes(req, info)
-            return (quizzes + fallback[len(quizzes):])[: req.quiz_count]
+        if len(quizzes) >= req.quiz_count:
+            return quizzes[: req.quiz_count]
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Nguồn {info['title']} đã được đọc, nhưng hệ thống chỉ tạo được {len(quizzes)}/{req.quiz_count} quiz hợp lệ. "
+                "Hãy giảm số bộ, đổi focus, hoặc import file nguồn thật."
+            ),
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.warning(f"Source quiz generation failed, using fallback: {exc}")
-
-    return _source_fallback_quizzes(req, info)
+        logger.warning(f"Source quiz generation failed without fallback: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Hệ thống không thể tạo quiz từ nguồn {info['title']} lúc này. "
+                "Không còn fallback mock nữa; hãy thử lại hoặc dùng import file."
+            ),
+        ) from exc
 
 
 async def _generate_quiz(req: QuizGenerateRequest, focus_text: str) -> GeneratedQuiz:
@@ -1462,6 +1541,14 @@ async def generate_quiz_sets_from_sources(
         question_count=total_questions,
         sets=set_details,
     )
+
+
+@router.post("/curated-sync", response_model=CuratedQuizSyncResponse)
+async def sync_curated_open_source_library(
+    req: CuratedQuizSyncRequest,
+    user: User = Depends(require_role("admin")),
+):
+    return await _sync_curated_open_source_sets(user=user, replace_existing=req.replace_existing)
 
 
 @router.get("/sets", response_model=list[QuizSetDetailResponse])
