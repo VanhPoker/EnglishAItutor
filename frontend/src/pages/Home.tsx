@@ -151,7 +151,7 @@ export default function Home() {
                 },
                 {
                   title: "Làm bài quiz",
-                  body: weakArea ? `Tập trung vào lỗi ${focusLabel(weakArea)}.` : "Chọn bài có sẵn trong kho đề.",
+                  body: weakArea ? `Tạo bài ôn lỗi bám vào nhóm ${focusLabel(weakArea)}.` : "Mở kho đề hoặc tạo một bài ôn lỗi cá nhân.",
                   icon: ClipboardList,
                   action: "Mở bài quiz",
                   to: "/quizzes",
@@ -212,8 +212,8 @@ export default function Home() {
                   </p>
                   <p className="mt-1 text-sm text-gray-500">
                     {weakArea
-                      ? "Sau khi luyện nói, hãy chọn quiz phù hợp để kiểm tra lại."
-                      : "Một cuộc trò chuyện sẽ tạo dữ liệu cho phần ôn lỗi và quiz."}
+                      ? "Sau khi luyện nói, hãy tạo quiz ôn lỗi để kiểm tra lại đúng nhóm đang yếu."
+                      : "Một cuộc trò chuyện hoặc một bài quiz sẽ tạo dữ liệu để hệ thống ra bài ôn sát lỗi hơn."}
                   </p>
                 </div>
               </div>

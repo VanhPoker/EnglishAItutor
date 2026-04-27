@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -7,14 +7,16 @@ import {
   ClipboardList,
   Loader2,
   RefreshCw,
+  Sparkles,
   Target,
   XCircle,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
+import { generateQuiz, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
 import { focusLabel } from "../lib/labels";
+import { useUserStore } from "../stores/userStore";
 
 function scoreTone(score: number) {
   if (score >= 80) {
@@ -64,10 +66,14 @@ function trendTone(trend: QuizAttemptResponse["learner_profile"]["recent_trend"]
 }
 
 export default function QuizResult() {
+  const navigate = useNavigate();
   const { attemptId } = useParams();
+  const { topic, level } = useUserStore();
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [generatingRemedial, setGeneratingRemedial] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     if (!attemptId) return;
@@ -120,6 +126,26 @@ export default function QuizResult() {
   const tone = scoreTone(attempt.score);
   const learnerTone = trendTone(attempt.learner_profile.recent_trend);
 
+  const handleGenerateRemedialQuiz = async () => {
+    setGeneratingRemedial(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const quiz = await generateQuiz({
+        topic,
+        level,
+        question_count: 5,
+        source: "mistakes",
+      });
+      setActionMessage("Đã tạo bài ôn lỗi kế tiếp. Đang chuyển sang bài quiz.");
+      navigate(`/quizzes/${quiz.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được quiz ôn lỗi");
+    } finally {
+      setGeneratingRemedial(false);
+    }
+  };
+
   return (
     <Layout>
       <div className="page-shell">
@@ -132,6 +158,15 @@ export default function QuizResult() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void handleGenerateRemedialQuiz()}
+              disabled={generatingRemedial}
+              className="btn-secondary inline-flex items-center gap-2"
+            >
+              {generatingRemedial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Tạo bài ôn lỗi
+            </button>
             <Link to={`/quizzes/${attempt.quiz_id}`} className="btn-primary inline-flex items-center gap-2">
               <RefreshCw className="h-4 w-4" />
               Làm lại
@@ -141,6 +176,12 @@ export default function QuizResult() {
             </Link>
           </div>
         </div>
+
+        {actionMessage && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {actionMessage}
+          </div>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
           <section className="space-y-6">

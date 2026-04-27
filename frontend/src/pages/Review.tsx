@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  Sparkles,
   Target,
   XCircle,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import {
+  generateQuiz,
   getLatestSessionReview,
   getSessionReview,
   type SessionReviewResponse,
@@ -44,12 +46,15 @@ function scoreLabel(value: number | null) {
 }
 
 export default function Review() {
+  const navigate = useNavigate();
   const { sessionId } = useParams();
   const [review, setReview] = useState<SessionReviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [checks, setChecks] = useState<Record<string, CheckState>>({});
+  const [generatingQuiz, setGeneratingQuiz] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +105,27 @@ export default function Review() {
       ...prev,
       [drillId]: isCloseEnough(answers[drillId] || "", target) ? "correct" : "retry",
     }));
+  };
+
+  const handleGenerateRemedialQuiz = async () => {
+    if (!review) return;
+    setGeneratingQuiz(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const quiz = await generateQuiz({
+        topic: review.session.topic,
+        level: review.session.level,
+        question_count: 5,
+        source: "mistakes",
+      });
+      setActionMessage("Đã tạo bài ôn lỗi mới. Đang chuyển sang bài quiz.");
+      navigate(`/quizzes/${quiz.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được quiz ôn lỗi");
+    } finally {
+      setGeneratingQuiz(false);
+    }
   };
 
   if (loading) {
@@ -153,6 +179,15 @@ export default function Review() {
               </div>
             </div>
             <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void handleGenerateRemedialQuiz()}
+                disabled={generatingQuiz}
+                className="btn-secondary inline-flex items-center gap-2"
+              >
+                {generatingQuiz ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Tạo quiz ôn lỗi
+              </button>
               <Link to="/practice" className="btn-primary inline-flex items-center gap-2">
                 Luyện lại
                 <RefreshCw className="w-4 h-4" />
@@ -163,6 +198,12 @@ export default function Review() {
             </div>
           </div>
         </motion.div>
+
+        {actionMessage && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {actionMessage}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {[
