@@ -7,12 +7,14 @@ import {
   Brain,
   CheckCircle2,
   ClipboardList,
+  Download,
   FilePlus2,
   Loader2,
   Plus,
   RefreshCw,
   Sparkles,
   Trash2,
+  Upload,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
@@ -21,7 +23,9 @@ import {
   createQuiz,
   generateQuiz,
   getQuizzes,
+  importQuizzes,
   type QuizCreateRequest,
+  type QuizImportItem,
   type QuizListItem,
 } from "../lib/api";
 import { questionTypeLabel, quizSourceLabel, topicLabel } from "../lib/labels";
@@ -40,7 +44,7 @@ const TOPICS = [
 ];
 
 type ManualQuestion = QuizCreateRequest["questions"][number];
-type Mode = "generate" | "manual";
+type Mode = "generate" | "manual" | "import";
 
 function emptyManualQuestion(index: number): ManualQuestion {
   return {
@@ -52,6 +56,188 @@ function emptyManualQuestion(index: number): ManualQuestion {
     explanation: "",
     focus: "grammar",
   };
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function parseDelimitedOptions(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value !== "string") return [];
+  return value
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      i += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function firstValue(row: Record<string, string>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value?.trim()) return value.trim();
+  }
+  return "";
+}
+
+function normalizeQuestion(raw: any, index: number): ManualQuestion | null {
+  const prompt = String(raw.prompt || raw.question || raw.question_text || "").trim();
+  const correctAnswer = String(raw.correct_answer || raw.answer || raw.correct || raw.correct_option || "").trim();
+  if (!prompt || !correctAnswer) return null;
+
+  const rawType = String(raw.type || raw.question_type || "multiple_choice").toLowerCase();
+  const type = rawType.includes("fill") || rawType.includes("blank") ? "fill_blank" : "multiple_choice";
+  const options = type === "multiple_choice"
+    ? [
+        ...parseDelimitedOptions(raw.options),
+        raw.option_a,
+        raw.option_b,
+        raw.option_c,
+        raw.option_d,
+        raw.option_e,
+        raw.option_f,
+        raw.a,
+        raw.b,
+        raw.c,
+        raw.d,
+        raw.e,
+        raw.f,
+      ]
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+
+  return {
+    id: String(raw.id || `q${index}`),
+    type,
+    prompt,
+    options,
+    correct_answer: correctAnswer,
+    explanation: String(raw.explanation || raw.explain || "").trim(),
+    focus: String(raw.focus || raw.skill || "grammar").trim() || "grammar",
+  };
+}
+
+function normalizeQuiz(raw: any, fallbackTopic: string, fallbackLevel: string, index: number): QuizImportItem | null {
+  const rawQuestions: any[] = Array.isArray(raw.questions) ? raw.questions : [];
+  const questions = rawQuestions
+    .map((question, questionIndex) => normalizeQuestion(question, questionIndex + 1))
+    .filter(Boolean) as ManualQuestion[];
+  if (!questions.length) return null;
+
+  return {
+    title: String(raw.title || raw.quiz_title || `Bộ quiz import ${index}`).trim(),
+    topic: String(raw.topic || fallbackTopic).trim() || fallbackTopic,
+    level: String(raw.level || fallbackLevel).trim() || fallbackLevel,
+    description: String(raw.description || "").trim() || undefined,
+    questions,
+  };
+}
+
+function parseJsonImport(text: string, fallbackTopic: string, fallbackLevel: string): QuizImportItem[] {
+  const parsed = JSON.parse(text);
+  const rawQuizzes = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.quizzes)
+    ? parsed.quizzes
+    : parsed.questions
+    ? [parsed]
+    : [];
+
+  return rawQuizzes
+    .map((item: any, index: number) => normalizeQuiz(item, fallbackTopic, fallbackLevel, index + 1))
+    .filter(Boolean) as QuizImportItem[];
+}
+
+function parseCsvImport(text: string, fallbackTopic: string, fallbackLevel: string): QuizImportItem[] {
+  const rows = parseCsvRows(text);
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map(normalizeHeader);
+  const grouped = new Map<string, QuizImportItem>();
+
+  rows.slice(1).forEach((values, rowIndex) => {
+    const row = Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+    const title = firstValue(row, ["quiz_title", "title", "quiz"]) || "Bộ quiz import";
+    const rowTopic = firstValue(row, ["topic", "category"]) || fallbackTopic;
+    const rowLevel = firstValue(row, ["level", "cefr_level"]) || fallbackLevel;
+    const description = firstValue(row, ["description", "desc"]);
+    const key = `${title}|||${rowTopic}|||${rowLevel}|||${description}`;
+    const question = normalizeQuestion(
+      {
+        id: firstValue(row, ["id", "question_id"]) || `q${rowIndex + 1}`,
+        type: firstValue(row, ["type", "question_type"]),
+        prompt: firstValue(row, ["prompt", "question", "question_text"]),
+        options: firstValue(row, ["options"]),
+        option_a: firstValue(row, ["option_a", "option_1", "a"]),
+        option_b: firstValue(row, ["option_b", "option_2", "b"]),
+        option_c: firstValue(row, ["option_c", "option_3", "c"]),
+        option_d: firstValue(row, ["option_d", "option_4", "d"]),
+        option_e: firstValue(row, ["option_e", "option_5", "e"]),
+        option_f: firstValue(row, ["option_f", "option_6", "f"]),
+        correct_answer: firstValue(row, ["correct_answer", "answer", "correct", "correct_option"]),
+        explanation: firstValue(row, ["explanation", "explain"]),
+        focus: firstValue(row, ["focus", "skill"]),
+      },
+      rowIndex + 1
+    );
+    if (!question) return;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        title,
+        topic: rowTopic,
+        level: rowLevel,
+        description: description || undefined,
+        questions: [],
+      });
+    }
+    grouped.get(key)!.questions.push(question);
+  });
+
+  return Array.from(grouped.values()).filter((item) => item.questions.length > 0);
 }
 
 function formatDate(value: string) {
@@ -68,6 +254,7 @@ export default function QuizStudio() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
 
   const [mode, setMode] = useState<Mode>("generate");
@@ -81,9 +268,13 @@ export default function QuizStudio() {
   const [manualQuestions, setManualQuestions] = useState<ManualQuestion[]>([
     emptyManualQuestion(1),
   ]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importPreview, setImportPreview] = useState<QuizImportItem[]>([]);
+  const [importMessage, setImportMessage] = useState("");
 
   const currentTopicLabel = useMemo(() => topicLabel(topic), [topic]);
   const latestAttemptScore = quizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
+  const importQuestionCount = importPreview.reduce((sum, item) => sum + item.questions.length, 0);
 
   const loadQuizzes = async () => {
     setLoading(true);
@@ -179,6 +370,67 @@ export default function QuizStudio() {
     } finally {
       setSavingManual(false);
     }
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    setImportMessage("");
+    setError("");
+    setImportFileName(file?.name || "");
+    setImportPreview([]);
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lowerName = file.name.toLowerCase();
+      const parsed = lowerName.endsWith(".json")
+        ? parseJsonImport(text, topic, level)
+        : parseCsvImport(text, topic, level);
+
+      if (!parsed.length) {
+        setError("Không tìm thấy quiz hợp lệ trong file. Hãy kiểm tra header CSV hoặc cấu trúc JSON.");
+        return;
+      }
+      setImportPreview(parsed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không đọc được file import");
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (!importPreview.length) {
+      setError("Hãy chọn file CSV hoặc JSON trước khi import.");
+      return;
+    }
+
+    setImporting(true);
+    setError("");
+    setImportMessage("");
+    try {
+      const response = await importQuizzes(importPreview);
+      await loadQuizzes();
+      setImportMessage(`Đã import ${response.imported_count} quiz với ${response.question_count} câu hỏi.`);
+      setImportPreview([]);
+      setImportFileName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import file thất bại");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const downloadSampleCsv = () => {
+    const sample = [
+      "quiz_title,topic,level,type,prompt,option_a,option_b,option_c,option_d,correct_answer,explanation,focus",
+      '"Basic Grammar A2",daily_life,A2,multiple_choice,"Choose the correct sentence.","She goes to school.","She go to school.","She going to school.","She gone to school.",A,"Use goes with she/he/it.","grammar"',
+      '"Basic Grammar A2",daily_life,A2,fill_blank,"Complete: I have lived here ___ 2020.",,,,,since,"Use since with a starting point.","grammar"',
+    ].join("\n");
+    const blob = new Blob([sample], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "english-quiz-import-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -304,10 +556,11 @@ export default function QuizStudio() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1">
+              <div className="mt-5 grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-1">
                 {[
                   { value: "generate", label: "Tạo bằng AI" },
                   { value: "manual", label: "Tự tạo" },
+                  { value: "import", label: "Import file" },
                 ].map((item) => (
                   <button
                     key={item.value}
@@ -403,7 +656,7 @@ export default function QuizStudio() {
                     Tạo quiz
                   </button>
                 </div>
-              ) : (
+              ) : mode === "manual" ? (
                 <div className="mt-5 space-y-4">
                   <label className="block">
                     <span className="field-label">Tiêu đề</span>
@@ -500,6 +753,78 @@ export default function QuizStudio() {
                       Lưu quiz
                     </button>
                   </div>
+                </div>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4">
+                    <Upload className="h-5 w-5 text-gray-500" />
+                    <h3 className="mt-3 text-sm font-semibold text-gray-900">Import CSV hoặc JSON</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Phù hợp khi bạn có nhiều bộ câu hỏi tiếng Anh thật. CSV sẽ gom câu hỏi theo cột
+                      <span className="font-medium text-gray-700"> quiz_title</span>.
+                    </p>
+                    <input
+                      type="file"
+                      accept=".csv,.json,text/csv,application/json"
+                      onChange={(event) => void handleImportFile(event.target.files?.[0] || null)}
+                      className="mt-4 block w-full text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
+                    />
+                    <button
+                      type="button"
+                      onClick={downloadSampleCsv}
+                      className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-blue-700 hover:text-blue-800"
+                    >
+                      <Download className="h-4 w-4" />
+                      Tải file CSV mẫu
+                    </button>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-sm font-semibold text-gray-900">Định dạng hỗ trợ</p>
+                    <ul className="mt-2 space-y-1 text-sm text-gray-500">
+                      <li>
+                        CSV: <code>quiz_title, topic, level, type, prompt, option_a...option_d, correct_answer, explanation, focus</code>.
+                      </li>
+                      <li>
+                        JSON: object có <code>quizzes</code>, hoặc một quiz đơn có <code>questions</code>.
+                      </li>
+                      <li>Đáp án trắc nghiệm có thể là nội dung đáp án hoặc ký tự A/B/C/D.</li>
+                    </ul>
+                  </div>
+
+                  {importFileName && (
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+                      <p className="text-sm font-semibold text-blue-900">{importFileName}</p>
+                      <p className="mt-1 text-sm text-blue-800">
+                        Đọc được {importPreview.length} quiz, tổng {importQuestionCount} câu hỏi.
+                      </p>
+                      {importPreview.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          {importPreview.slice(0, 4).map((item) => (
+                            <div key={`${item.title}-${item.questions.length}`} className="rounded-md bg-white/70 px-3 py-2 text-xs text-blue-900">
+                              {item.title} · {item.level} · {topicLabel(item.topic)} · {item.questions.length} câu
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {importMessage && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                      {importMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={importing || importPreview.length === 0}
+                    onClick={handleImportSubmit}
+                    className="btn-primary inline-flex w-full items-center justify-center gap-2"
+                  >
+                    {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    Import vào thư viện
+                  </button>
                 </div>
               )}
             </Card>

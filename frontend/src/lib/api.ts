@@ -315,6 +315,20 @@ export interface QuizCreateRequest {
   questions: Array<QuizQuestion & { correct_answer: string }>;
 }
 
+export interface QuizImportItem {
+  title: string;
+  topic: string;
+  level: string;
+  description?: string;
+  questions: Array<QuizQuestion & { correct_answer: string }>;
+}
+
+export interface QuizImportResponse {
+  imported_count: number;
+  question_count: number;
+  quizzes: QuizListItem[];
+}
+
 export interface QuestionResult {
   question_id: string;
   prompt: string;
@@ -363,6 +377,13 @@ export async function generateQuiz(data: QuizGenerateRequest): Promise<QuizRespo
   return apiFetch<QuizResponse>(`${API_BASE}/quizzes/generate`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function importQuizzes(quizzes: QuizImportItem[]): Promise<QuizImportResponse> {
+  return apiFetch<QuizImportResponse>(`${API_BASE}/quizzes/import`, {
+    method: "POST",
+    body: JSON.stringify({ quizzes }),
   });
 }
 
