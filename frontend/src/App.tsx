@@ -7,6 +7,7 @@ import { useUserStore } from "./stores/userStore";
 import Home from "./pages/Home";
 import Practice from "./pages/Practice";
 import Dashboard from "./pages/Dashboard";
+import AdminDashboard from "./pages/AdminDashboard";
 import AdminUsers from "./pages/AdminUsers";
 import Review from "./pages/Review";
 import QuizResult from "./pages/QuizResult";
@@ -25,21 +26,28 @@ function FullScreenLoader() {
   );
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function homePathForRole(user: ReturnType<typeof useAuthStore.getState>["user"]) {
+  return user?.role === "admin" ? "/admin" : "/";
+}
+
+function LearnerRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBootstrapped = useAuthStore((s) => s.isBootstrapped);
+  const user = useAuthStore((s) => s.user);
 
   if (!isBootstrapped) return <FullScreenLoader />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role === "admin") return <Navigate to="/admin" replace />;
   return <>{children}</>;
 }
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isBootstrapped = useAuthStore((s) => s.isBootstrapped);
+  const user = useAuthStore((s) => s.user);
 
   if (!isBootstrapped) return <FullScreenLoader />;
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  if (isAuthenticated) return <Navigate to={homePathForRole(user)} replace />;
   return <>{children}</>;
 }
 
@@ -52,6 +60,15 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (user?.role !== "admin") return <Navigate to="/" replace />;
   return <>{children}</>;
+}
+
+function RoleRedirect() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isBootstrapped = useAuthStore((s) => s.isBootstrapped);
+  const user = useAuthStore((s) => s.user);
+
+  if (!isBootstrapped) return <FullScreenLoader />;
+  return <Navigate to={isAuthenticated ? homePathForRole(user) : "/login"} replace />;
 }
 
 export default function App() {
@@ -82,65 +99,73 @@ export default function App() {
       <Route
         path="/"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <Home />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/practice"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <Practice />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <Dashboard />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/review"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <Review />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/review/:sessionId"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <Review />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/quizzes"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <QuizStudio />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/quizzes/:quizId"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <QuizTake />
-          </ProtectedRoute>
+          </LearnerRoute>
         }
       />
       <Route
         path="/quiz-results/:attemptId"
         element={
-          <ProtectedRoute>
+          <LearnerRoute>
             <QuizResult />
-          </ProtectedRoute>
+          </LearnerRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminDashboard />
+          </AdminRoute>
         }
       />
       <Route
@@ -151,6 +176,7 @@ export default function App() {
           </AdminRoute>
         }
       />
+      <Route path="*" element={<RoleRedirect />} />
     </Routes>
   );
 }

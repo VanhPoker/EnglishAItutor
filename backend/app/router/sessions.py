@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
-from app.core.auth import get_current_user
+from app.core.auth import require_role
 from app.database.connection import get_session_factory
 from app.database.models import ErrorLog, PracticeSession, User
 
@@ -101,7 +101,7 @@ class ErrorCreate(BaseModel):
 # ── Session endpoints ────────────────────────────────────────────
 
 @router.post("/sessions", response_model=SessionResponse)
-async def create_session(req: SessionCreate, user: User = Depends(get_current_user)):
+async def create_session(req: SessionCreate, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         session = PracticeSession(
@@ -117,7 +117,7 @@ async def create_session(req: SessionCreate, user: User = Depends(get_current_us
 
 
 @router.put("/sessions/{session_id}", response_model=SessionResponse)
-async def end_session(session_id: str, req: SessionUpdate, user: User = Depends(get_current_user)):
+async def end_session(session_id: str, req: SessionUpdate, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
@@ -144,7 +144,7 @@ async def end_session(session_id: str, req: SessionUpdate, user: User = Depends(
 async def list_sessions(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role("learner")),
 ):
     factory = get_session_factory()
     async with factory() as db:
@@ -160,7 +160,7 @@ async def list_sessions(
 
 
 @router.get("/sessions/latest-review", response_model=SessionReviewResponse)
-async def get_latest_session_review(user: User = Depends(get_current_user)):
+async def get_latest_session_review(user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
@@ -180,7 +180,7 @@ async def get_latest_session_review(user: User = Depends(get_current_user)):
 
 
 @router.get("/sessions/{session_id}/review", response_model=SessionReviewResponse)
-async def get_session_review(session_id: str, user: User = Depends(get_current_user)):
+async def get_session_review(session_id: str, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
@@ -199,7 +199,7 @@ async def get_session_review(session_id: str, user: User = Depends(get_current_u
 # ── Error logging ────────────────────────────────────────────────
 
 @router.post("/errors")
-async def log_error(req: ErrorCreate, user: User = Depends(get_current_user)):
+async def log_error(req: ErrorCreate, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         error = ErrorLog(
@@ -218,7 +218,7 @@ async def log_error(req: ErrorCreate, user: User = Depends(get_current_user)):
 # ── Dashboard ────────────────────────────────────────────────────
 
 @router.get("/dashboard", response_model=DashboardStats)
-async def get_dashboard(user: User = Depends(get_current_user)):
+async def get_dashboard(user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         # Aggregate stats

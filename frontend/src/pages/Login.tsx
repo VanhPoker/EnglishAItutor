@@ -49,7 +49,7 @@ export default function Login() {
         : await login(email, password);
 
       setSession(res.token, res.user);
-      navigate("/");
+      navigate(res.user.role === "admin" ? "/admin" : "/");
     } catch (err: any) {
       setError(err.message || "Có lỗi xảy ra, vui lòng thử lại.");
     } finally {

@@ -8,7 +8,7 @@ from livekit import api
 from livekit.api import RoomAgentDispatch, RoomConfiguration
 from pydantic import BaseModel
 
-from app.core.auth import get_current_user
+from app.core.auth import require_role
 from app.core.settings import settings
 from app.database.models import User
 
@@ -72,7 +72,7 @@ def create_token(user_id: str, user_name: str, topic: str | None, level: str | N
 
 
 @router.post("/token", response_model=TokenResponse)
-async def get_token(request: TokenRequest, user: User = Depends(get_current_user)):
+async def get_token(request: TokenRequest, user: User = Depends(require_role("learner"))):
     try:
         result = create_token(
             user_id=user.id,
@@ -87,7 +87,7 @@ async def get_token(request: TokenRequest, user: User = Depends(get_current_user
 
 
 @router.get("/token")
-async def get_token_default(user: User = Depends(get_current_user)):
+async def get_token_default(user: User = Depends(require_role("learner"))):
     """Quick token for development/testing."""
     try:
         result = create_token(user.id, user.name, "free_conversation", user.cefr_level)
