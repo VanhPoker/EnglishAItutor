@@ -2,7 +2,6 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
   BookOpen,
-  ClipboardCheck,
   CreditCard,
   Home,
   ListChecks,
@@ -14,6 +13,7 @@ import {
 import type { ReactNode } from "react";
 import { logoutRequest } from "../../lib/api";
 import { useAuthStore } from "../../stores/authStore";
+import BrandMark from "./BrandMark";
 
 interface LayoutProps {
   children: ReactNode;
@@ -48,7 +48,7 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = isAdmin ? adminItems : learnerItems;
   const homePath = isAdmin ? "/admin" : "/";
   const productName = isAdmin ? "Quản trị hệ thống" : "Gia sư AI tiếng Anh";
-  const productCaption = isAdmin ? "Người dùng và phân quyền" : "Luyện nói, ôn lỗi, quiz";
+  const productCaption = isAdmin ? "Quản trị dữ liệu học tập" : "Luyện nói, ôn lỗi, quiz";
 
   const handleLogout = async () => {
     await logoutRequest().catch(() => undefined);
@@ -84,16 +84,10 @@ export default function Layout({ children }: LayoutProps) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 lg:grid lg:grid-cols-[260px_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-gray-200 bg-white lg:flex">
-        <div className="flex h-16 items-center gap-3 border-b border-gray-200 px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white">
-            <ClipboardCheck className="h-5 w-5" />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-gray-900">{productName}</p>
-            <p className="text-xs text-gray-500">{productCaption}</p>
-          </div>
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef6ff_42%,#f8fafc_100%)] lg:grid lg:grid-cols-[260px_1fr]">
+      <aside className="sticky top-0 hidden h-screen flex-col border-r border-gray-200 bg-white/95 shadow-sm backdrop-blur lg:flex">
+        <div className="flex h-16 items-center border-b border-gray-200 px-5">
+          <BrandMark title={productName} caption={productCaption} />
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-4">{nav}</nav>
@@ -122,10 +116,7 @@ export default function Layout({ children }: LayoutProps) {
         <header className="sticky top-0 z-40 border-b border-gray-200 bg-white lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Link to={homePath} className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
-                <ClipboardCheck className="h-4 w-4" />
-              </div>
-              <span className="text-sm font-bold text-gray-900">{productName}</span>
+              <BrandMark title={productName} size="sm" />
             </Link>
             <button
               type="button"
