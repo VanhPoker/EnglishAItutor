@@ -425,6 +425,15 @@ export interface QuizSetGenerateResponse {
   sets: QuizSetInfo[];
 }
 
+export interface CuratedQuizSyncResponse {
+  deleted_quiz_count: number;
+  deleted_set_count: number;
+  imported_quiz_count: number;
+  imported_set_count: number;
+  question_count: number;
+  sets: QuizSetInfo[];
+}
+
 export interface QuizImageUploadResponse {
   url: string;
   file_name: string;
@@ -539,6 +548,13 @@ export async function generateQuizSetsFromSources(
   return apiFetch<QuizSetGenerateResponse>(`${API_BASE}/quizzes/source-sets/generate`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function syncCuratedQuizLibrary(replaceExisting = true): Promise<CuratedQuizSyncResponse> {
+  return apiFetch<CuratedQuizSyncResponse>(`${API_BASE}/quizzes/curated-sync`, {
+    method: "POST",
+    body: JSON.stringify({ replace_existing: replaceExisting }),
   });
 }
 

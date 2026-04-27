@@ -26,6 +26,7 @@ import {
   getQuizzes,
   importQuizzes,
   importQuizzesFromSource,
+  syncCuratedQuizLibrary,
   updateQuiz,
   uploadQuizImage,
   type QuizCreateRequest,
@@ -301,6 +302,7 @@ export default function QuizStudio() {
   const [importing, setImporting] = useState(false);
   const [sourceImporting, setSourceImporting] = useState(false);
   const [sourceSetGenerating, setSourceSetGenerating] = useState(false);
+  const [curatedSyncing, setCuratedSyncing] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
@@ -555,6 +557,29 @@ export default function QuizStudio() {
       setError(err instanceof Error ? err.message : "Không tạo được các bộ quiz từ nguồn");
     } finally {
       setSourceSetGenerating(false);
+    }
+  };
+
+  const handleCuratedSync = async () => {
+    const confirmed = window.confirm(
+      "Thay toàn bộ quiz nguồn mở hiện tại bằng bộ dữ liệu curated mới? Các lượt làm bài gắn với quiz nguồn mở cũ cũng sẽ bị xoá."
+    );
+    if (!confirmed) return;
+
+    setCuratedSyncing(true);
+    setError("");
+    setActionMessage("");
+    setSourceMessage("");
+    try {
+      const response = await syncCuratedQuizLibrary(true);
+      await loadQuizzes();
+      setSourceMessage(
+        `Đã thay ${response.deleted_quiz_count} quiz cũ bằng ${response.imported_set_count} bộ mới (${response.imported_quiz_count} quiz, ${response.question_count} câu).`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không đồng bộ được bộ dữ liệu curated");
+    } finally {
+      setCuratedSyncing(false);
     }
   };
 
@@ -923,7 +948,8 @@ export default function QuizStudio() {
                   </label>
 
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    Hệ thống dùng nguồn làm ngữ cảnh và tạo câu hỏi mới, tránh copy nguyên văn đoạn dài. Mỗi quiz sẽ lưu kèm nguồn để dễ giải thích trong báo cáo.
+                    Luồng này chỉ tạo quiz khi đọc được nội dung nguồn và sinh được câu hỏi hợp lệ. Nếu nguồn lỗi, hệ
+                    thống sẽ dừng và báo lỗi thay vì đẻ bộ quiz mock.
                   </div>
 
                   {sourceMessage && (
@@ -949,6 +975,15 @@ export default function QuizStudio() {
                   >
                     {sourceSetGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Globe2 className="h-4 w-4" />}
                     Tạo bộ từ tất cả nguồn
+                  </button>
+                  <button
+                    type="button"
+                    disabled={curatedSyncing}
+                    onClick={handleCuratedSync}
+                    className="btn-secondary inline-flex w-full items-center justify-center gap-2 border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                  >
+                    {curatedSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Thay bằng bộ dữ liệu curated
                   </button>
                 </div>
               ) : mode === "manual" ? (
