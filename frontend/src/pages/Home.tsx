@@ -83,7 +83,7 @@ export default function Home() {
     try {
       const updatedUser = await claimAdminAccess();
       updateAuthUser(updatedUser);
-      navigate("/admin/users");
+      navigate("/admin");
     } finally {
       setClaimingAdmin(false);
     }

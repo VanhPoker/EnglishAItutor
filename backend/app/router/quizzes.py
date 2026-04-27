@@ -19,7 +19,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, select
 
-from app.core.auth import get_current_user
+from app.core.auth import require_role
 from app.core.llm import get_model
 from app.core.settings import settings
 from app.database.connection import get_session_factory
@@ -987,7 +987,7 @@ Viết cụ thể, sát lỗi, và phù hợp cho buổi học tiếp theo.
 @router.post("/upload-image", response_model=QuizImageUploadResponse)
 async def upload_quiz_image(
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role("learner")),
 ):
     content_type = (file.content_type or "").lower()
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -1011,7 +1011,7 @@ async def upload_quiz_image(
 
 
 @router.post("", response_model=QuizResponse)
-async def create_quiz(req: QuizCreateRequest, user: User = Depends(get_current_user)):
+async def create_quiz(req: QuizCreateRequest, user: User = Depends(require_role("learner"))):
     questions = _normalize_questions(req.questions)
     if len(questions) < 1:
         raise HTTPException(status_code=422, detail="At least one question is required")
@@ -1034,7 +1034,7 @@ async def create_quiz(req: QuizCreateRequest, user: User = Depends(get_current_u
 
 
 @router.post("/generate", response_model=QuizResponse)
-async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(get_current_user)):
+async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         focus_text = await _recent_error_focus(db, user.id) if req.source == "mistakes" else ""
@@ -1058,7 +1058,7 @@ async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(get_curre
 async def list_quizzes(
     limit: int = Query(default=30, le=100),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role("learner")),
 ):
     factory = get_session_factory()
     async with factory() as db:
@@ -1095,7 +1095,7 @@ async def list_quizzes(
 
 
 @router.post("/import", response_model=QuizImportResponse)
-async def import_quizzes(req: QuizImportRequest, user: User = Depends(get_current_user)):
+async def import_quizzes(req: QuizImportRequest, user: User = Depends(require_role("learner"))):
     if not req.quizzes:
         raise HTTPException(status_code=422, detail="No quizzes to import")
 
@@ -1152,7 +1152,7 @@ async def import_quizzes(req: QuizImportRequest, user: User = Depends(get_curren
 
 
 @router.post("/source-import", response_model=QuizSourceImportResponse)
-async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = Depends(get_current_user)):
+async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = Depends(require_role("learner"))):
     info = _source_info(req)
     source_text = await _fetch_source_text(info.get("url"))
     generated_items = await _generate_source_quizzes(req, info, source_text)
@@ -1219,7 +1219,7 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
 
 
 @router.get("/{quiz_id}", response_model=QuizResponse)
-async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
+async def get_quiz(quiz_id: str, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(select(Quiz).where(Quiz.id == quiz_id, Quiz.user_id == user.id))
@@ -1230,7 +1230,7 @@ async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
 
 
 @router.post("/{quiz_id}/submit", response_model=QuizAttemptResponse)
-async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(get_current_user)):
+async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(select(Quiz).where(Quiz.id == quiz_id, Quiz.user_id == user.id))
@@ -1280,7 +1280,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
 
 
 @router.get("/attempts/{attempt_id}", response_model=QuizAttemptResponse)
-async def get_quiz_attempt(attempt_id: str, user: User = Depends(get_current_user)):
+async def get_quiz_attempt(attempt_id: str, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(

@@ -6,6 +6,7 @@ import {
   Home,
   ListChecks,
   LogOut,
+  ShieldCheck,
   Target,
   Users,
 } from "lucide-react";
@@ -17,7 +18,7 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const baseItems = [
+const learnerItems = [
   { path: "/", label: "Học tập", icon: Home, matches: ["/"] },
   { path: "/practice", label: "Luyện nói", icon: BookOpen, matches: ["/practice"] },
   { path: "/review", label: "Ôn lỗi", icon: Target, matches: ["/review"] },
@@ -30,16 +31,20 @@ const baseItems = [
   { path: "/dashboard", label: "Tiến độ", icon: BarChart3, matches: ["/dashboard"] },
 ];
 
+const adminItems = [
+  { path: "/admin", label: "Tổng quan", icon: ShieldCheck, matches: ["/admin"] },
+  { path: "/admin/users", label: "Người dùng", icon: Users, matches: ["/admin/users"] },
+];
+
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const navItems = [
-    ...baseItems,
-    ...(user?.role === "admin"
-      ? [{ path: "/admin/users", label: "Người dùng", icon: Users, matches: ["/admin/users"] }]
-      : []),
-  ];
+  const isAdmin = user?.role === "admin";
+  const navItems = isAdmin ? adminItems : learnerItems;
+  const homePath = isAdmin ? "/admin" : "/";
+  const productName = isAdmin ? "Quản trị hệ thống" : "Gia sư AI tiếng Anh";
+  const productCaption = isAdmin ? "Người dùng và phân quyền" : "Luyện nói, ôn lỗi, quiz";
 
   const handleLogout = async () => {
     await logoutRequest().catch(() => undefined);
@@ -48,7 +53,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const isActive = (matches: string[]) => {
     return matches.some((item) =>
-      item === "/" ? location.pathname === "/" : location.pathname.startsWith(item)
+      item === "/" || item === "/admin" ? location.pathname === item : location.pathname.startsWith(item)
     );
   };
 
@@ -82,8 +87,8 @@ export default function Layout({ children }: LayoutProps) {
             <ClipboardCheck className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-bold text-gray-900">Gia sư AI tiếng Anh</p>
-            <p className="text-xs text-gray-500">Luyện nói, ôn lỗi, quiz</p>
+            <p className="text-sm font-bold text-gray-900">{productName}</p>
+            <p className="text-xs text-gray-500">{productCaption}</p>
           </div>
         </div>
 
@@ -94,8 +99,7 @@ export default function Layout({ children }: LayoutProps) {
             <div className="mb-3">
               <p className="truncate text-sm font-semibold text-gray-900">{user.name}</p>
               <p className="text-xs text-gray-500">
-                {user.cefr_level}
-                {user.role === "admin" ? " · quản trị" : ""}
+                {isAdmin ? "Quản trị viên" : user.cefr_level}
               </p>
             </div>
             <button
@@ -113,11 +117,11 @@ export default function Layout({ children }: LayoutProps) {
       <div className="min-w-0">
         <header className="sticky top-0 z-40 border-b border-gray-200 bg-white lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
-            <Link to="/" className="flex items-center gap-2">
+            <Link to={homePath} className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
                 <ClipboardCheck className="h-4 w-4" />
               </div>
-              <span className="text-sm font-bold text-gray-900">Gia sư AI tiếng Anh</span>
+              <span className="text-sm font-bold text-gray-900">{productName}</span>
             </Link>
             <button
               type="button"
