@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowRight,
-  BookOpenCheck,
-  Brain,
   CheckCircle2,
   ClipboardList,
   Download,
@@ -22,6 +18,7 @@ import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import {
   createQuiz,
+  deleteQuiz,
   generateQuiz,
   getQuizzes,
   importQuizzes,
@@ -292,7 +289,6 @@ function formatDate(value: string) {
 }
 
 export default function QuizStudio() {
-  const navigate = useNavigate();
   const { topic: currentTopic, level: currentLevel } = useUserStore();
   const [quizzes, setQuizzes] = useState<QuizListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -300,11 +296,12 @@ export default function QuizStudio() {
   const [savingManual, setSavingManual] = useState(false);
   const [importing, setImporting] = useState(false);
   const [sourceImporting, setSourceImporting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [uploadingImageFor, setUploadingImageFor] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
 
   const [mode, setMode] = useState<Mode>("generate");
-  const [source, setSource] = useState<"mistakes" | "topic">("mistakes");
   const [topic, setTopic] = useState(currentTopic || "free_conversation");
   const [level, setLevel] = useState(currentLevel || "B1");
   const [questionCount, setQuestionCount] = useState(5);
@@ -323,12 +320,10 @@ export default function QuizStudio() {
   const [sourceFocus, setSourceFocus] = useState("");
   const [sourceMessage, setSourceMessage] = useState("");
 
-  const currentTopicLabel = useMemo(() => topicLabel(topic), [topic]);
   const selectedSourcePreset = useMemo(
     () => SOURCE_PRESETS.find((item) => item.value === sourcePreset) || SOURCE_PRESETS[0],
     [sourcePreset]
   );
-  const latestAttemptScore = quizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
   const importQuestionCount = importPreview.reduce((sum, item) => sum + item.questions.length, 0);
 
   const loadQuizzes = async () => {
@@ -349,16 +344,17 @@ export default function QuizStudio() {
   const handleGenerate = async () => {
     setGenerating(true);
     setError("");
+    setActionMessage("");
     try {
       const quiz = await generateQuiz({
         topic,
         level,
         question_count: questionCount,
-        source,
+        source: "topic",
         focus: focus.trim() || undefined,
       });
       await loadQuizzes();
-      navigate(`/quizzes/${quiz.id}`);
+      setActionMessage(`Đã tạo quiz "${quiz.title}". Học viên sẽ thấy bài này trong kho đề.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tạo được quiz");
     } finally {
@@ -426,6 +422,7 @@ export default function QuizStudio() {
 
     setSavingManual(true);
     setError("");
+    setActionMessage("");
     try {
       const quiz = await createQuiz({
         title: manualTitle.trim() || "Bài quiz tiếng Anh theo mục tiêu",
@@ -435,7 +432,7 @@ export default function QuizStudio() {
         questions: cleaned,
       });
       await loadQuizzes();
-      navigate(`/quizzes/${quiz.id}`);
+      setActionMessage(`Đã lưu quiz "${quiz.title}".`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không lưu được quiz");
     } finally {
@@ -475,6 +472,7 @@ export default function QuizStudio() {
 
     setImporting(true);
     setError("");
+    setActionMessage("");
     setImportMessage("");
     try {
       const response = await importQuizzes(importPreview);
@@ -497,6 +495,7 @@ export default function QuizStudio() {
 
     setSourceImporting(true);
     setError("");
+    setActionMessage("");
     setSourceMessage("");
     try {
       const response = await importQuizzesFromSource({
@@ -516,6 +515,23 @@ export default function QuizStudio() {
       setError(err instanceof Error ? err.message : "Không tạo được quiz từ nguồn mở");
     } finally {
       setSourceImporting(false);
+    }
+  };
+
+  const handleDeleteQuiz = async (quiz: QuizListItem) => {
+    if (!window.confirm(`Xoá quiz "${quiz.title}" khỏi kho đề?`)) return;
+
+    setDeletingId(quiz.id);
+    setError("");
+    setActionMessage("");
+    try {
+      await deleteQuiz(quiz.id);
+      await loadQuizzes();
+      setActionMessage(`Đã xoá quiz "${quiz.title}".`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xoá được quiz");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -540,10 +556,10 @@ export default function QuizStudio() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-blue-700">Tạo bài quiz</p>
-              <h1 className="mt-1 text-3xl font-bold text-gray-900">Luyện tập từ lỗi sai</h1>
+              <p className="text-sm font-semibold text-blue-700">Quản trị kho đề</p>
+              <h1 className="mt-1 text-3xl font-bold text-gray-900">Quản lý quiz tiếng Anh</h1>
               <p className="mt-2 max-w-2xl text-sm text-gray-600">
-                Tạo bài luyện ngắn từ lỗi trong cuộc trò chuyện, hoặc tự tạo bộ câu hỏi để demo.
+                Tạo, import và quản lý các bộ quiz để học viên vào làm bài.
               </p>
             </div>
             <button
@@ -563,12 +579,18 @@ export default function QuizStudio() {
           </div>
         )}
 
+        {actionMessage && (
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+            {actionMessage}
+          </div>
+        )}
+
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="space-y-6">
             <Card>
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Quiz đã lưu</p>
+                  <p className="text-sm text-gray-500">Quiz trong kho</p>
                   <p className="mt-1 text-2xl font-bold text-gray-900">{quizzes.length}</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-4">
@@ -576,9 +598,9 @@ export default function QuizStudio() {
                   <p className="mt-1 text-2xl font-bold text-gray-900">{level}</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm text-gray-500">Điểm gần nhất</p>
+                  <p className="text-sm text-gray-500">Chế độ</p>
                   <p className="mt-1 text-2xl font-bold text-gray-900">
-                    {latestAttemptScore == null ? "N/A" : `${latestAttemptScore}%`}
+                    Quản trị
                   </p>
                 </div>
               </div>
@@ -587,9 +609,9 @@ export default function QuizStudio() {
             <Card>
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="font-semibold text-gray-900">Thư viện quiz</h2>
+                  <h2 className="font-semibold text-gray-900">Kho quiz</h2>
                   <p className="mt-1 text-sm text-gray-500">
-                    Trọng tâm hiện tại: {level} · {currentTopicLabel}
+                    Học viên sẽ chỉ thấy danh sách bài để làm, không thấy công cụ tạo đề.
                   </p>
                 </div>
                 <Badge variant="info">{quizzes.length} bài</Badge>
@@ -605,7 +627,7 @@ export default function QuizStudio() {
                   <ClipboardList className="mx-auto h-8 w-8 text-gray-400" />
                   <h3 className="mt-3 font-semibold text-gray-900">Chưa có quiz</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    Tạo quiz từ lỗi sai sau phiên học, hoặc tự tạo bộ câu hỏi.
+                    Tạo bằng AI, import file hoặc nhập thủ công để học viên có bài làm.
                   </p>
                 </div>
               ) : (
@@ -631,13 +653,15 @@ export default function QuizStudio() {
                           {quiz.level} · {topicLabel(quiz.topic)} · {quiz.question_count} câu · {formatDate(quiz.created_at)}
                         </p>
                       </div>
-                      <Link
-                        to={`/quizzes/${quiz.id}`}
-                        className="btn-secondary inline-flex items-center justify-center gap-2"
+                      <button
+                        type="button"
+                        disabled={deletingId === quiz.id}
+                        onClick={() => void handleDeleteQuiz(quiz)}
+                        className="btn-secondary inline-flex items-center justify-center gap-2 text-red-600 hover:bg-red-50 hover:text-red-700"
                       >
-                        Làm quiz
-                        <ArrowRight className="h-4 w-4" />
-                      </Link>
+                        {deletingId === quiz.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        Xoá
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -652,8 +676,8 @@ export default function QuizStudio() {
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-gray-900">Tạo bài luyện</h2>
-                  <p className="text-sm text-gray-500">Ngắn, rõ trọng tâm, dễ đo kết quả.</p>
+                  <h2 className="font-semibold text-gray-900">Tạo bộ quiz</h2>
+                  <p className="text-sm text-gray-500">Bộ đề chung cho học viên.</p>
                 </div>
               </div>
 
@@ -714,28 +738,8 @@ export default function QuizStudio() {
 
               {mode === "generate" ? (
                 <div className="mt-5 space-y-4">
-                  <div>
-                    <span className="field-label">Nguồn tạo</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { value: "mistakes", label: "Từ lỗi sai", icon: Brain },
-                        { value: "topic", label: "Theo chủ đề", icon: BookOpenCheck },
-                      ].map((item) => (
-                        <button
-                          key={item.value}
-                          type="button"
-                          onClick={() => setSource(item.value as "mistakes" | "topic")}
-                          className={`rounded-lg border p-3 text-left transition ${
-                            source === item.value
-                              ? "border-blue-300 bg-blue-50 text-blue-800"
-                              : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                          }`}
-                        >
-                          <item.icon className="mb-2 h-4 w-4" />
-                          <span className="text-sm font-semibold">{item.label}</span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                    AI sẽ tạo bộ câu hỏi theo trình độ, chủ đề và trọng tâm bạn nhập. Phần này không phụ thuộc dữ liệu hội thoại của học viên.
                   </div>
 
                   <label className="block">
@@ -1075,9 +1079,9 @@ export default function QuizStudio() {
               <div className="flex gap-3">
                 <FilePlus2 className="mt-0.5 h-5 w-5 text-blue-700" />
                 <div>
-                  <p className="text-sm font-semibold text-blue-900">Luồng demo an toàn</p>
+                  <p className="text-sm font-semibold text-blue-900">Luồng quản trị</p>
                   <p className="mt-1 text-sm text-blue-800">
-                    Trò chuyện tạo ra lỗi thật. Quiz biến lỗi đó thành bài luyện có điểm số.
+                    Admin chuẩn bị kho đề. Học viên chỉ vào danh sách quiz, làm bài và xem AI nhận xét.
                   </p>
                 </div>
               </div>

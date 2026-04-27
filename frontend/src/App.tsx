@@ -11,6 +11,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AdminUsers from "./pages/AdminUsers";
 import Review from "./pages/Review";
 import QuizResult from "./pages/QuizResult";
+import LearnerQuizzes from "./pages/LearnerQuizzes";
 import QuizStudio from "./pages/QuizStudio";
 import QuizTake from "./pages/QuizTake";
 import Login from "./pages/Login";
@@ -140,7 +141,7 @@ export default function App() {
         path="/quizzes"
         element={
           <LearnerRoute>
-            <QuizStudio />
+            <LearnerQuizzes />
           </LearnerRoute>
         }
       />
@@ -173,6 +174,14 @@ export default function App() {
         element={
           <AdminRoute>
             <AdminUsers />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/quizzes"
+        element={
+          <AdminRoute>
+            <QuizStudio />
           </AdminRoute>
         }
       />

@@ -13,13 +13,13 @@ from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 
-from app.core.auth import require_role
+from app.core.auth import get_current_user, require_role
 from app.core.llm import get_model
 from app.core.settings import settings
 from app.database.connection import get_session_factory
@@ -987,7 +987,7 @@ Viết cụ thể, sát lỗi, và phù hợp cho buổi học tiếp theo.
 @router.post("/upload-image", response_model=QuizImageUploadResponse)
 async def upload_quiz_image(
     file: UploadFile = File(...),
-    user: User = Depends(require_role("learner")),
+    user: User = Depends(require_role("admin")),
 ):
     content_type = (file.content_type or "").lower()
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -1011,7 +1011,7 @@ async def upload_quiz_image(
 
 
 @router.post("", response_model=QuizResponse)
-async def create_quiz(req: QuizCreateRequest, user: User = Depends(require_role("learner"))):
+async def create_quiz(req: QuizCreateRequest, user: User = Depends(require_role("admin"))):
     questions = _normalize_questions(req.questions)
     if len(questions) < 1:
         raise HTTPException(status_code=422, detail="At least one question is required")
@@ -1034,7 +1034,7 @@ async def create_quiz(req: QuizCreateRequest, user: User = Depends(require_role(
 
 
 @router.post("/generate", response_model=QuizResponse)
-async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_role("learner"))):
+async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_role("admin"))):
     factory = get_session_factory()
     async with factory() as db:
         focus_text = await _recent_error_focus(db, user.id) if req.source == "mistakes" else ""
@@ -1058,13 +1058,14 @@ async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(require_r
 async def list_quizzes(
     limit: int = Query(default=30, le=100),
     offset: int = Query(default=0, ge=0),
-    user: User = Depends(require_role("learner")),
+    user: User = Depends(get_current_user),
 ):
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
             select(Quiz)
-            .where(Quiz.user_id == user.id)
+            .join(User, Quiz.user_id == User.id)
+            .where(User.role == "admin")
             .order_by(desc(Quiz.created_at))
             .limit(limit)
             .offset(offset)
@@ -1072,13 +1073,15 @@ async def list_quizzes(
         quizzes = result.scalars().all()
         items = []
         for quiz in quizzes:
-            attempt_result = await db.execute(
-                select(QuizAttempt)
-                .where(QuizAttempt.quiz_id == quiz.id, QuizAttempt.user_id == user.id)
-                .order_by(desc(QuizAttempt.created_at))
-                .limit(1)
-            )
-            latest_attempt = attempt_result.scalar_one_or_none()
+            latest_attempt = None
+            if user.role == "learner":
+                attempt_result = await db.execute(
+                    select(QuizAttempt)
+                    .where(QuizAttempt.quiz_id == quiz.id, QuizAttempt.user_id == user.id)
+                    .order_by(desc(QuizAttempt.created_at))
+                    .limit(1)
+                )
+                latest_attempt = attempt_result.scalar_one_or_none()
             items.append(
                 QuizListItem(
                     id=quiz.id,
@@ -1095,7 +1098,7 @@ async def list_quizzes(
 
 
 @router.post("/import", response_model=QuizImportResponse)
-async def import_quizzes(req: QuizImportRequest, user: User = Depends(require_role("learner"))):
+async def import_quizzes(req: QuizImportRequest, user: User = Depends(require_role("admin"))):
     if not req.quizzes:
         raise HTTPException(status_code=422, detail="No quizzes to import")
 
@@ -1152,7 +1155,7 @@ async def import_quizzes(req: QuizImportRequest, user: User = Depends(require_ro
 
 
 @router.post("/source-import", response_model=QuizSourceImportResponse)
-async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = Depends(require_role("learner"))):
+async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = Depends(require_role("admin"))):
     info = _source_info(req)
     source_text = await _fetch_source_text(info.get("url"))
     generated_items = await _generate_source_quizzes(req, info, source_text)
@@ -1218,11 +1221,36 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
     )
 
 
-@router.get("/{quiz_id}", response_model=QuizResponse)
-async def get_quiz(quiz_id: str, user: User = Depends(require_role("learner"))):
+@router.delete("/{quiz_id}", status_code=204)
+async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin"))):
+    del user
     factory = get_session_factory()
     async with factory() as db:
-        result = await db.execute(select(Quiz).where(Quiz.id == quiz_id, Quiz.user_id == user.id))
+        result = await db.execute(
+            select(Quiz)
+            .join(User, Quiz.user_id == User.id)
+            .where(Quiz.id == quiz_id, User.role == "admin")
+        )
+        quiz = result.scalar_one_or_none()
+        if not quiz:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+
+        await db.execute(delete(QuizAttempt).where(QuizAttempt.quiz_id == quiz.id))
+        await db.delete(quiz)
+        await db.commit()
+        return Response(status_code=204)
+
+
+@router.get("/{quiz_id}", response_model=QuizResponse)
+async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
+    del user
+    factory = get_session_factory()
+    async with factory() as db:
+        result = await db.execute(
+            select(Quiz)
+            .join(User, Quiz.user_id == User.id)
+            .where(Quiz.id == quiz_id, User.role == "admin")
+        )
         quiz = result.scalar_one_or_none()
         if not quiz:
             raise HTTPException(status_code=404, detail="Quiz not found")
@@ -1233,7 +1261,11 @@ async def get_quiz(quiz_id: str, user: User = Depends(require_role("learner"))):
 async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(require_role("learner"))):
     factory = get_session_factory()
     async with factory() as db:
-        result = await db.execute(select(Quiz).where(Quiz.id == quiz_id, Quiz.user_id == user.id))
+        result = await db.execute(
+            select(Quiz)
+            .join(User, Quiz.user_id == User.id)
+            .where(Quiz.id == quiz_id, User.role == "admin")
+        )
         quiz = result.scalar_one_or_none()
         if not quiz:
             raise HTTPException(status_code=404, detail="Quiz not found")
