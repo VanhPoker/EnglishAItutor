@@ -346,6 +346,25 @@ export interface QuizReview {
   next_steps: string[];
 }
 
+export interface LearnerFocusInsight {
+  focus: string;
+  accuracy: number;
+  correct_count: number;
+  total_count: number;
+}
+
+export interface LearnerQuizProfile {
+  attempts_analyzed: number;
+  total_questions_analyzed: number;
+  average_score: number | null;
+  recent_trend: "improving" | "steady" | "declining" | "insufficient_data";
+  summary: string;
+  strongest_focuses: LearnerFocusInsight[];
+  weakest_focuses: LearnerFocusInsight[];
+  recommended_focuses: string[];
+  recommendations: string[];
+}
+
 export interface QuizAttemptResponse {
   id: string;
   quiz_id: string;
@@ -355,6 +374,7 @@ export interface QuizAttemptResponse {
   total_questions: number;
   results: QuestionResult[];
   ai_review: QuizReview;
+  learner_profile: LearnerQuizProfile;
   created_at: string;
 }
 
