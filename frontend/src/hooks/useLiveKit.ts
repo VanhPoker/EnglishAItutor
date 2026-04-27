@@ -12,6 +12,7 @@ import { getToken, type TokenRequest } from "../lib/api";
 import { useChatStore } from "../stores/chatStore";
 
 const CHAT_TOPIC = "ai-text-stream";
+const SECURE_LIVEKIT_URL = "wss://livekit.4.145.98.216.sslip.io";
 type ChatRole = "user" | "assistant";
 type TranscriptBuffer = { texts: string[]; ids: Set<string> };
 
@@ -69,8 +70,15 @@ function getLiveKitUrl() {
     return import.meta.env.VITE_LIVEKIT_URL;
   }
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.hostname}:7880`;
+  if (window.location.protocol === "https:") {
+    return SECURE_LIVEKIT_URL;
+  }
+
+  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
+    return "ws://127.0.0.1:7880";
+  }
+
+  return `ws://${window.location.hostname}:7880`;
 }
 
 export function useLiveKit() {
