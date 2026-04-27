@@ -11,7 +11,7 @@ from sqlalchemy import delete, desc, func, or_, select
 
 from app.core.auth import get_current_user, require_role
 from app.database.connection import get_session_factory
-from app.database.models import ErrorLog, PaymentRequest, PracticeSession, Quiz, QuizAttempt, RefreshToken, User
+from app.database.models import ErrorLog, PasswordResetCode, PaymentRequest, PracticeSession, Quiz, QuizAttempt, QuizSet, RefreshToken, User
 
 router = APIRouter(tags=["Admin"])
 
@@ -290,9 +290,11 @@ async def delete_user(
 
         await session.execute(delete(QuizAttempt).where(QuizAttempt.user_id == user_id))
         await session.execute(delete(Quiz).where(Quiz.user_id == user_id))
+        await session.execute(delete(QuizSet).where(QuizSet.created_by == user_id))
         await session.execute(delete(ErrorLog).where(ErrorLog.user_id == user_id))
         await session.execute(delete(PracticeSession).where(PracticeSession.user_id == user_id))
         await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+        await session.execute(delete(PasswordResetCode).where(PasswordResetCode.user_id == user_id))
         await session.execute(delete(PaymentRequest).where(PaymentRequest.user_id == user_id))
         await session.delete(user)
         await session.commit()

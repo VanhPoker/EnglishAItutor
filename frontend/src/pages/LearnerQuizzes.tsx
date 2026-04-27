@@ -5,7 +5,7 @@ import { ArrowRight, ClipboardList, Loader2, RefreshCw } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { getQuizzes, type QuizListItem } from "../lib/api";
+import { getQuizSets, getQuizzes, type QuizListItem, type QuizSetInfo } from "../lib/api";
 import { quizSourceLabel, topicLabel } from "../lib/labels";
 
 function formatDate(value: string) {
@@ -17,20 +17,27 @@ function formatDate(value: string) {
 
 export default function LearnerQuizzes() {
   const [quizzes, setQuizzes] = useState<QuizListItem[]>([]);
+  const [quizSets, setQuizSets] = useState<QuizSetInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const latestAttemptScore = quizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
+  const allQuizzes = useMemo(
+    () => [...quizSets.flatMap((set) => set.quizzes), ...quizzes],
+    [quizSets, quizzes]
+  );
+  const latestAttemptScore = allQuizzes.find((quiz) => quiz.latest_score != null)?.latest_score;
   const totalQuestions = useMemo(
-    () => quizzes.reduce((sum, quiz) => sum + quiz.question_count, 0),
-    [quizzes]
+    () => allQuizzes.reduce((sum, quiz) => sum + quiz.question_count, 0),
+    [allQuizzes]
   );
 
   const loadQuizzes = async () => {
     setLoading(true);
     setError("");
     try {
-      setQuizzes(await getQuizzes());
+      const [sets, quizItems] = await Promise.all([getQuizSets(), getQuizzes()]);
+      setQuizSets(sets);
+      setQuizzes(quizItems.filter((quiz) => !quiz.quiz_set_id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được kho quiz");
     } finally {
@@ -74,7 +81,7 @@ export default function LearnerQuizzes() {
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <p className="text-sm text-gray-500">Bài quiz có thể làm</p>
-            <p className="mt-1 text-2xl font-bold text-gray-900">{quizzes.length}</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">{allQuizzes.length}</p>
           </Card>
           <Card>
             <p className="text-sm text-gray-500">Tổng số câu hỏi</p>
@@ -92,9 +99,9 @@ export default function LearnerQuizzes() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="font-semibold text-gray-900">Danh sách quiz</h2>
-              <p className="mt-1 text-sm text-gray-500">Bạn chỉ cần chọn bài và làm, phần tạo đề nằm ở tài khoản quản trị.</p>
+              <p className="mt-1 text-sm text-gray-500">Quiz được gom theo bộ đề và lọc theo trình độ hiện tại của bạn.</p>
             </div>
-            <Badge variant="info">{quizzes.length} bài</Badge>
+            <Badge variant="info">{quizSets.length} bộ · {allQuizzes.length} bài</Badge>
           </div>
 
           {loading ? (
@@ -102,14 +109,60 @@ export default function LearnerQuizzes() {
               <Loader2 className="h-4 w-4 animate-spin" />
               Đang tải quiz...
             </div>
-          ) : quizzes.length === 0 ? (
+          ) : allQuizzes.length === 0 ? (
             <div className="mt-6 rounded-lg border border-dashed border-gray-300 p-8 text-center">
               <ClipboardList className="mx-auto h-8 w-8 text-gray-400" />
               <h3 className="mt-3 font-semibold text-gray-900">Chưa có quiz để làm</h3>
               <p className="mt-1 text-sm text-gray-500">Quản trị viên cần tạo hoặc import bộ đề trước.</p>
             </div>
           ) : (
-            <div className="mt-5 divide-y divide-gray-200">
+            <div className="mt-5 space-y-5">
+              {quizSets.map((set) => (
+                <div key={set.id} className="rounded-lg border border-gray-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-gray-900">{set.title}</h3>
+                        <Badge variant="success">{quizSourceLabel(set.source)}</Badge>
+                        <Badge variant="info">{set.level}</Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {topicLabel(set.topic)} · {set.quiz_count} bài · {set.question_count} câu
+                      </p>
+                      {set.description && <p className="mt-2 text-sm text-gray-600">{set.description}</p>}
+                    </div>
+                    {set.latest_score != null && (
+                      <Badge variant={set.latest_score >= 70 ? "success" : "error"}>{set.latest_score}% gần nhất</Badge>
+                    )}
+                  </div>
+
+                  <div className="mt-4 divide-y divide-gray-100">
+                    {set.quizzes.map((quiz) => (
+                      <div key={quiz.id} className="flex flex-col gap-3 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-gray-900">{quiz.title}</p>
+                            {quiz.latest_score != null && (
+                              <Badge variant={quiz.latest_score >= 70 ? "success" : "error"}>{quiz.latest_score}%</Badge>
+                            )}
+                          </div>
+                          <p className="mt-1 text-sm text-gray-500">
+                            {quiz.level} · {quiz.question_count} câu · {formatDate(quiz.created_at)}
+                          </p>
+                        </div>
+                        <Link to={`/quizzes/${quiz.id}`} className="btn-primary inline-flex items-center justify-center gap-2">
+                          Làm quiz
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {quizzes.length > 0 && (
+                <div className="divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white p-4">
+                  <h3 className="pb-3 font-semibold text-gray-900">Bài lẻ</h3>
               {quizzes.map((quiz) => (
                 <div
                   key={quiz.id}
@@ -140,6 +193,8 @@ export default function LearnerQuizzes() {
                   </Link>
                 </div>
               ))}
+                </div>
+              )}
             </div>
           )}
         </Card>

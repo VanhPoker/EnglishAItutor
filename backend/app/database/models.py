@@ -65,6 +65,7 @@ class Quiz(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    quiz_set_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("quiz_sets.id"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     topic: Mapped[str] = mapped_column(String(255), default="free_conversation")
     level: Mapped[str] = mapped_column(String(2), default="B1")
@@ -75,6 +76,28 @@ class Quiz(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     attempts: Mapped[list["QuizAttempt"]] = relationship(back_populates="quiz")
+    quiz_set: Mapped["QuizSet | None"] = relationship(back_populates="quizzes")
+
+
+class QuizSet(Base):
+    __tablename__ = "quiz_sets"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    created_by: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
+    source_preset: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attribution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic: Mapped[str] = mapped_column(String(255), default="free_conversation")
+    level: Mapped[str] = mapped_column(String(2), default="B1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    quizzes: Mapped[list["Quiz"]] = relationship(back_populates="quiz_set")
 
 
 class QuizAttempt(Base):
@@ -122,6 +145,18 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="refresh_tokens")
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class PaymentRequest(Base):

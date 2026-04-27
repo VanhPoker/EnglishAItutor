@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import desc, select, update
 
 from app.core.auth import (
     clear_refresh_cookie,
@@ -16,15 +19,17 @@ from app.core.auth import (
     get_refresh_session,
     hash_password,
     persist_refresh_token,
+    revoke_all_refresh_tokens,
     revoke_refresh_token,
     set_refresh_cookie,
     validate_password_strength,
     verify_password,
 )
+from app.core.email import send_email
 from app.core.rate_limit import auth_rate_limiter
 from app.core.settings import settings
 from app.database.connection import get_session_factory
-from app.database.models import User
+from app.database.models import PasswordResetCode, User
 
 router = APIRouter(tags=["Auth"])
 
@@ -73,6 +78,13 @@ async def _apply_refresh_limits(request: Request) -> None:
     await _enforce_limit(f"refresh:ip:{ip}", limit=30, window_seconds=300, message="Too many refresh attempts.")
 
 
+async def _apply_password_reset_limits(request: Request, email: str) -> None:
+    ip = _client_ip(request)
+    normalized = _normalize_email(email)
+    await _enforce_limit(f"password-reset:ip:{ip}", limit=8, window_seconds=600, message="Too many reset attempts.")
+    await _enforce_limit(f"password-reset:email:{normalized}", limit=4, window_seconds=600, message="Too many reset attempts.")
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
@@ -110,6 +122,34 @@ class LoginRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: EmailStr) -> str:
         return _normalize_email(str(value))
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return _normalize_email(str(value))
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=12)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return _normalize_email(str(value))
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        cleaned = "".join(ch for ch in value.strip() if ch.isalnum())
+        if len(cleaned) < 6:
+            raise ValueError("Reset code is invalid.")
+        return cleaned
 
 
 class AuthUser(BaseModel):
@@ -170,6 +210,11 @@ def _user_dict(user: User) -> dict:
     }
 
 
+def _reset_code_hash(email: str, code: str) -> str:
+    raw = f"{_normalize_email(email)}:{code}:{settings.JWT_SECRET_KEY}".encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
 async def _issue_auth_response(response: Response, user: User) -> AuthResponse:
     access_token = create_access_token(user)
     refresh_token, jti, expires_at = create_refresh_token(user.id)
@@ -198,7 +243,8 @@ async def register(req: RegisterRequest, request: Request, response: Response):
             password_hash=hash_password(req.password),
             name=req.name,
             native_language=req.native_language,
-            cefr_level=req.cefr_level,
+            # Learners start at the default level; admins adjust CEFR later.
+            cefr_level="B1",
             role="learner",
         )
         session.add(user)
@@ -206,6 +252,86 @@ async def register(req: RegisterRequest, request: Request, response: Response):
         await session.refresh(user)
 
     return await _issue_auth_response(response, user)
+
+
+@router.post("/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest, request: Request):
+    await _apply_password_reset_limits(request, req.email)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(select(User).where(User.email == req.email))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return {"status": "ok"}
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        expires_at = datetime.utcnow() + timedelta(minutes=settings.PASSWORD_RESET_CODE_MINUTES)
+        await session.execute(
+            update(PasswordResetCode)
+            .where(PasswordResetCode.user_id == user.id, PasswordResetCode.used_at.is_(None))
+            .values(used_at=datetime.utcnow())
+        )
+        session.add(
+            PasswordResetCode(
+                user_id=user.id,
+                email=user.email,
+                code_hash=_reset_code_hash(user.email, code),
+                expires_at=expires_at,
+            )
+        )
+        await session.commit()
+
+    sent = send_email(
+        req.email,
+        "Mã đặt lại mật khẩu English AI Tutor",
+        (
+            "Mã đặt lại mật khẩu của bạn là: "
+            f"{code}\n\nMã có hiệu lực trong {settings.PASSWORD_RESET_CODE_MINUTES} phút."
+        ),
+    )
+    if not sent:
+        # Keep the public response generic, but make dev/testing possible from logs.
+        import logging
+
+        logging.getLogger(__name__).warning("Password reset code for %s: %s", req.email, code)
+    return {"status": "ok"}
+
+
+@router.post("/reset-password")
+async def reset_password(req: ResetPasswordRequest, request: Request):
+    await _apply_password_reset_limits(request, req.email)
+    validate_password_strength(req.password, email=req.email)
+    code_hash = _reset_code_hash(req.email, req.code)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(select(User).where(User.email == req.email))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=400, detail="Mã đặt lại mật khẩu không hợp lệ.")
+
+        code_result = await session.execute(
+            select(PasswordResetCode)
+            .where(
+                PasswordResetCode.user_id == user.id,
+                PasswordResetCode.code_hash == code_hash,
+                PasswordResetCode.used_at.is_(None),
+                PasswordResetCode.expires_at > datetime.utcnow(),
+            )
+            .order_by(desc(PasswordResetCode.created_at))
+            .limit(1)
+        )
+        reset_code = code_result.scalar_one_or_none()
+        if reset_code is None:
+            raise HTTPException(status_code=400, detail="Mã đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.")
+
+        user.password_hash = hash_password(req.password)
+        reset_code.used_at = datetime.utcnow()
+        await session.commit()
+
+    await revoke_all_refresh_tokens(user.id)
+    return {"status": "ok"}
 
 
 @router.post("/login", response_model=AuthResponse)
