@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Optional
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
@@ -23,6 +25,15 @@ router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
 QuizSource = Literal["ai", "manual", "mistakes", "imported"]
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+QUIZ_IMAGE_DIR = Path(__file__).resolve().parents[1] / "uploads" / "quiz-images"
+QUIZ_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class QuizQuestion(BaseModel):
@@ -33,12 +44,21 @@ class QuizQuestion(BaseModel):
     correct_answer: str
     explanation: str = ""
     focus: str = "grammar"
+    image_url: Optional[str] = None
 
     @field_validator("options")
     @classmethod
     def validate_options(cls, value: list[str]) -> list[str]:
         cleaned = [item.strip() for item in value if item and item.strip()]
         return cleaned[:6]
+
+    @field_validator("image_url")
+    @classmethod
+    def normalize_image_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class QuizQuestionPublic(BaseModel):
@@ -48,6 +68,7 @@ class QuizQuestionPublic(BaseModel):
     options: list[str] = Field(default_factory=list)
     explanation: str = ""
     focus: str = "grammar"
+    image_url: Optional[str] = None
 
 
 class QuizCreateRequest(BaseModel):
@@ -113,6 +134,11 @@ class QuizImportResponse(BaseModel):
     quizzes: list[QuizListItem]
 
 
+class QuizImageUploadResponse(BaseModel):
+    url: str
+    file_name: str
+
+
 class QuestionResult(BaseModel):
     question_id: str
     prompt: str
@@ -121,6 +147,7 @@ class QuestionResult(BaseModel):
     correct_answer: str
     is_correct: bool
     explanation: str = ""
+    image_url: Optional[str] = None
 
 
 class QuizReview(BaseModel):
@@ -215,6 +242,7 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
                 correct_answer=correct_answer,
                 explanation=explanation,
                 focus=focus,
+                image_url=question.image_url,
             )
         )
     return normalized
@@ -229,6 +257,7 @@ def _public_question(question: dict) -> QuizQuestionPublic:
         options=data.options,
         explanation=data.explanation,
         focus=data.focus,
+        image_url=data.image_url,
     )
 
 
@@ -404,6 +433,7 @@ def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str]) -> tuple
                 correct_answer=expected,
                 is_correct=is_correct,
                 explanation=question.explanation,
+                image_url=question.image_url,
             )
         )
 
@@ -636,6 +666,32 @@ Viết cụ thể, sát lỗi, và phù hợp cho buổi học tiếp theo.
     except Exception as exc:
         logger.warning(f"Quiz AI review failed, using fallback review: {exc}")
         return _fallback_review(score, results)
+
+
+@router.post("/upload-image", response_model=QuizImageUploadResponse)
+async def upload_quiz_image(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail="Chỉ hỗ trợ ảnh JPG, PNG, WEBP hoặc GIF.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="File ảnh đang trống.")
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Ảnh quá lớn. Giới hạn hiện tại là 5MB.")
+
+    suffix = ALLOWED_IMAGE_TYPES[content_type]
+    safe_name = f"{user.id}-{uuid4().hex}{suffix}"
+    target = QUIZ_IMAGE_DIR / safe_name
+    target.write_bytes(content)
+
+    return QuizImageUploadResponse(
+        url=f"/media/quiz-images/{safe_name}",
+        file_name=file.filename or safe_name,
+    )
 
 
 @router.post("", response_model=QuizResponse)

@@ -4,12 +4,14 @@ Run with: uvicorn app.helper_api:app --port 8080 --reload
 """
 
 import logging
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
@@ -21,6 +23,8 @@ from app.router.sessions import router as sessions_router
 from app.router.token import router as token_router
 
 app = FastAPI(title="English Agent API", version="0.1.0")
+media_root = Path(__file__).resolve().parent / "uploads"
+media_root.mkdir(parents=True, exist_ok=True)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,6 +35,8 @@ app.add_middleware(
 )
 
 logging.basicConfig(level=logging.INFO)
+
+app.mount("/media", StaticFiles(directory=str(media_root)), name="media")
 
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(admin_router, prefix="/api")

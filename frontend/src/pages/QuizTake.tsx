@@ -182,6 +182,16 @@ export default function QuizTake() {
                 </div>
               </div>
 
+              {activeQuestion.image_url && (
+                <div className="mb-6 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                  <img
+                    src={activeQuestion.image_url}
+                    alt={`Minh hoạ cho câu ${activeIndex + 1}`}
+                    className="max-h-[360px] w-full object-contain"
+                  />
+                </div>
+              )}
+
               {activeQuestion.type === "multiple_choice" ? (
                 <div className="space-y-3">
                   {activeQuestion.options.map((option, optionIndex) => {
