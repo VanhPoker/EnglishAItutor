@@ -130,6 +130,25 @@ class QuizReview(BaseModel):
     next_steps: list[str] = Field(default_factory=list)
 
 
+class LearnerFocusInsight(BaseModel):
+    focus: str
+    accuracy: int
+    correct_count: int
+    total_count: int
+
+
+class LearnerQuizProfile(BaseModel):
+    attempts_analyzed: int = 0
+    total_questions_analyzed: int = 0
+    average_score: Optional[int] = None
+    recent_trend: Literal["improving", "steady", "declining", "insufficient_data"] = "insufficient_data"
+    summary: str = ""
+    strongest_focuses: list[LearnerFocusInsight] = Field(default_factory=list)
+    weakest_focuses: list[LearnerFocusInsight] = Field(default_factory=list)
+    recommended_focuses: list[str] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+
+
 class GeneratedQuizQuestion(BaseModel):
     id: Optional[str] = None
     type: QuestionType = "multiple_choice"
@@ -149,6 +168,7 @@ class QuizAttemptResponse(BaseModel):
     total_questions: int
     results: list[QuestionResult]
     ai_review: QuizReview
+    learner_profile: LearnerQuizProfile
     created_at: datetime
 
 
@@ -392,52 +412,223 @@ def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str]) -> tuple
     return score, correct_count, results
 
 
+def _trend_from_scores(scores: list[int]) -> Literal["improving", "steady", "declining", "insufficient_data"]:
+    if len(scores) < 4:
+        return "insufficient_data"
+
+    recent = scores[:3]
+    previous = scores[3:6]
+    if len(previous) < 2:
+        return "insufficient_data"
+
+    recent_avg = sum(recent) / len(recent)
+    previous_avg = sum(previous) / len(previous)
+    delta = recent_avg - previous_avg
+    if delta >= 5:
+        return "improving"
+    if delta <= -5:
+        return "declining"
+    return "steady"
+
+
+def _trend_label(trend: str) -> str:
+    return {
+        "improving": "đang đi lên",
+        "steady": "đang ổn định",
+        "declining": "đang chững hoặc giảm",
+        "insufficient_data": "chưa đủ dữ liệu",
+    }.get(trend, "chưa đủ dữ liệu")
+
+
+def _focus_insights(results_by_focus: dict[str, list[bool]], descending: bool) -> list[LearnerFocusInsight]:
+    insights = []
+    min_count = 2 if sum(len(items) for items in results_by_focus.values()) >= 6 else 1
+    for focus, values in results_by_focus.items():
+        total_count = len(values)
+        if total_count < min_count:
+            continue
+        correct_count = sum(1 for item in values if item)
+        accuracy = round((correct_count / total_count) * 100) if total_count else 0
+        insights.append(
+            LearnerFocusInsight(
+                focus=focus,
+                accuracy=accuracy,
+                correct_count=correct_count,
+                total_count=total_count,
+            )
+        )
+    insights.sort(key=lambda item: (item.accuracy, item.total_count), reverse=descending)
+    if not descending:
+        insights.sort(key=lambda item: (item.accuracy, -item.total_count))
+    return insights[:3]
+
+
+def _profile_recommendations(
+    weakest_focuses: list[LearnerFocusInsight],
+    recent_trend: str,
+    attempts_analyzed: int,
+) -> list[str]:
+    recommendations = []
+    for item in weakest_focuses[:2]:
+        recommendations.append(
+            f"Tập trung ôn {item.focus.replace('_', ' ')} với bài ngắn 3-5 câu, rồi nói lại đáp án đúng thành câu hoàn chỉnh."
+        )
+
+    if recent_trend == "declining":
+        recommendations.append("Giảm số câu mỗi bài và tăng tần suất ôn lại để kéo độ chính xác về mức ổn định trước.")
+    elif recent_trend == "improving":
+        recommendations.append("Giữ nhịp hiện tại và tăng dần độ khó ở đúng nhóm lỗi đang cải thiện.")
+
+    if attempts_analyzed < 3:
+        recommendations.append("Làm thêm vài bài ngắn ở các chủ điểm khác nhau để hồ sơ người học ổn định hơn.")
+
+    return recommendations[:4]
+
+
+def _profile_summary(
+    attempts_analyzed: int,
+    total_questions_analyzed: int,
+    strongest_focuses: list[LearnerFocusInsight],
+    weakest_focuses: list[LearnerFocusInsight],
+    recent_trend: str,
+) -> str:
+    if attempts_analyzed == 0 or total_questions_analyzed == 0:
+        return "Chưa có đủ dữ liệu quiz để rút ra hồ sơ học tập."
+
+    base = f"Đã phân tích {attempts_analyzed} bài gần nhất với {total_questions_analyzed} câu."
+    trend_text = _trend_label(recent_trend)
+
+    if strongest_focuses and weakest_focuses:
+        strongest = strongest_focuses[0]
+        weakest = weakest_focuses[0]
+        return (
+            f"{base} Bạn đang tốt hơn ở {strongest.focus.replace('_', ' ')} ({strongest.accuracy}%) "
+            f"nhưng còn yếu ở {weakest.focus.replace('_', ' ')} ({weakest.accuracy}%). Xu hướng gần đây {trend_text}."
+        )
+
+    if weakest_focuses:
+        weakest = weakest_focuses[0]
+        return (
+            f"{base} Điểm cần ưu tiên nhất hiện tại là {weakest.focus.replace('_', ' ')} "
+            f"với độ chính xác khoảng {weakest.accuracy}%. Xu hướng gần đây {trend_text}."
+        )
+
+    return f"{base} Kết quả hiện khá cân bằng giữa các nhóm kỹ năng. Xu hướng gần đây {trend_text}."
+
+
+async def _build_learner_profile(
+    db,
+    user_id: str,
+    current_attempt: Optional[dict] = None,
+    limit: int = 12,
+) -> LearnerQuizProfile:
+    result = await db.execute(
+        select(QuizAttempt)
+        .where(QuizAttempt.user_id == user_id)
+        .order_by(desc(QuizAttempt.created_at))
+        .limit(limit)
+    )
+    stored_attempts = result.scalars().all()
+
+    entries: list[dict] = []
+    if current_attempt:
+        entries.append(current_attempt)
+    for attempt in stored_attempts:
+        entries.append(
+            {
+                "score": int(attempt.score or 0),
+                "total_questions": int(attempt.total_questions or 0),
+                "results": [QuestionResult.model_validate(item) for item in attempt.result_json or []],
+            }
+        )
+
+    entries = entries[:limit]
+    if not entries:
+        return LearnerQuizProfile(
+            summary="Chưa có đủ dữ liệu quiz để rút ra hồ sơ học tập.",
+        )
+
+    scores = [int(item["score"]) for item in entries]
+    focus_map: dict[str, list[bool]] = {}
+    total_questions = 0
+    for entry in entries:
+        total_questions += int(entry["total_questions"] or len(entry["results"]))
+        for result_item in entry["results"]:
+            focus = (result_item.focus or "grammar").strip() or "grammar"
+            focus_map.setdefault(focus, []).append(bool(result_item.is_correct))
+
+    strongest_focuses = _focus_insights(focus_map, descending=True)
+    weakest_focuses = _focus_insights(focus_map, descending=False)
+    recent_trend = _trend_from_scores(scores)
+    recommended_focuses = [item.focus for item in weakest_focuses[:3]]
+
+    return LearnerQuizProfile(
+        attempts_analyzed=len(entries),
+        total_questions_analyzed=total_questions,
+        average_score=round(sum(scores) / len(scores)) if scores else None,
+        recent_trend=recent_trend,
+        summary=_profile_summary(len(entries), total_questions, strongest_focuses, weakest_focuses, recent_trend),
+        strongest_focuses=strongest_focuses,
+        weakest_focuses=weakest_focuses,
+        recommended_focuses=recommended_focuses,
+        recommendations=_profile_recommendations(weakest_focuses, recent_trend, len(entries)),
+    )
+
+
 def _fallback_review(score: int, results: list[QuestionResult]) -> QuizReview:
     wrong = [item for item in results if not item.is_correct]
     focus_counts = Counter(item.focus for item in wrong)
     improvement_areas = [
-        f"{focus.replace('_', ' ')}: review {count} missed question{'s' if count > 1 else ''}"
+        f"{focus.replace('_', ' ')}: sai {count} câu, cần ôn lại theo đúng mẫu lỗi này"
         for focus, count in focus_counts.most_common(3)
     ]
     if not improvement_areas:
-        improvement_areas = ["Keep reviewing the same pattern to make it automatic."]
+        improvement_areas = ["Độ chính xác đang ổn. Hãy tiếp tục ôn lại để phản xạ trở nên tự nhiên hơn."]
 
     return QuizReview(
-        summary=f"You scored {score}%. The next practice should focus on the mistakes from this quiz.",
-        strengths=["You completed the quiz and created measurable practice data."],
+        summary=f"Bạn đạt {score}%. Buổi luyện tiếp theo nên bám vào đúng các lỗi vừa sai trong bài này.",
+        strengths=["Bạn đã hoàn thành bài quiz và tạo được dữ liệu đo tiến bộ."],
         improvement_areas=improvement_areas,
         next_steps=[
-            "Redo the missed questions without looking at the answer.",
-            "Use each corrected sentence in one new spoken sentence.",
-            "Take another short quiz after one conversation session.",
+            "Làm lại các câu sai mà chưa nhìn đáp án.",
+            "Dùng mỗi đáp án đúng để đặt thêm một câu mới bằng lời nói.",
+            "Sau một buổi hội thoại, làm tiếp một quiz ngắn để kiểm tra lại.",
         ],
     )
 
 
-async def _build_ai_review(quiz: Quiz, score: int, results: list[QuestionResult]) -> QuizReview:
+async def _build_ai_review(
+    quiz: Quiz,
+    score: int,
+    results: list[QuestionResult],
+    learner_profile: LearnerQuizProfile,
+) -> QuizReview:
     wrong_items = [item.model_dump() for item in results if not item.is_correct]
     prompt = f"""
-Review this English learner quiz result.
+Hãy nhận xét ngắn gọn kết quả quiz tiếng Anh của người học.
 
-Quiz: {quiz.title}
-Topic: {quiz.topic}
-Level: {quiz.level}
-Score: {score}
-Wrong answers:
+Tên quiz: {quiz.title}
+Chủ đề: {quiz.topic}
+Trình độ: {quiz.level}
+Điểm số: {score}
+Các câu sai:
 {wrong_items}
 
-Return a short coaching review with:
+Hồ sơ người học từ các bài quiz gần đây:
+{learner_profile.model_dump()}
+
+Trả về nhận xét huấn luyện ngắn với:
 - summary
 - strengths
 - improvement_areas
 - next_steps
-Keep it concrete and useful for the next study session.
-"""
+Viết cụ thể, sát lỗi, và phù hợp cho buổi học tiếp theo.
+    """
     try:
         llm = get_model(settings.DEFAULT_MODEL, temperature=0.2).with_structured_output(QuizReview)
         review: QuizReview = await llm.ainvoke(
             [
-                SystemMessage(content="You are an English tutor reviewing quiz results."),
+                SystemMessage(content="Bạn là gia sư tiếng Anh đang nhận xét kết quả quiz cho một người học Việt Nam."),
                 HumanMessage(content=prompt),
             ]
         )
@@ -610,7 +801,16 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
 
         questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
         score, correct_count, question_results = _score_quiz(questions, req.answers)
-        review = await _build_ai_review(quiz, score, question_results)
+        learner_profile = await _build_learner_profile(
+            db,
+            user.id,
+            current_attempt={
+                "score": score,
+                "total_questions": len(questions),
+                "results": question_results,
+            },
+        )
+        review = await _build_ai_review(quiz, score, question_results, learner_profile)
 
         attempt = QuizAttempt(
             quiz_id=quiz.id,
@@ -635,6 +835,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             total_questions=len(questions),
             results=question_results,
             ai_review=review,
+            learner_profile=learner_profile,
             created_at=attempt.created_at,
         )
 
@@ -652,6 +853,7 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(get_current_use
         if not row:
             raise HTTPException(status_code=404, detail="Quiz attempt not found")
         attempt, quiz = row
+        learner_profile = await _build_learner_profile(db, user.id)
         return QuizAttemptResponse(
             id=attempt.id,
             quiz_id=quiz.id,
@@ -661,5 +863,6 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(get_current_use
             total_questions=attempt.total_questions,
             results=[QuestionResult.model_validate(item) for item in attempt.result_json or []],
             ai_review=QuizReview.model_validate(attempt.ai_review_json or {}),
+            learner_profile=learner_profile,
             created_at=attempt.created_at,
         )

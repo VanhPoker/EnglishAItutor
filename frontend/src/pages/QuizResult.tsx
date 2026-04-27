@@ -38,6 +38,31 @@ function scoreTone(score: number) {
   };
 }
 
+function trendTone(trend: QuizAttemptResponse["learner_profile"]["recent_trend"]) {
+  if (trend === "improving") {
+    return {
+      label: "Đang tiến bộ",
+      className: "border-green-200 bg-green-50 text-green-700",
+    };
+  }
+  if (trend === "declining") {
+    return {
+      label: "Cần siết lại",
+      className: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+  if (trend === "steady") {
+    return {
+      label: "Ổn định",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+    };
+  }
+  return {
+    label: "Chưa đủ dữ liệu",
+    className: "border-gray-200 bg-gray-50 text-gray-600",
+  };
+}
+
 export default function QuizResult() {
   const { attemptId } = useParams();
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
@@ -93,6 +118,7 @@ export default function QuizResult() {
   }
 
   const tone = scoreTone(attempt.score);
+  const learnerTone = trendTone(attempt.learner_profile.recent_trend);
 
   return (
     <Layout>
@@ -158,6 +184,86 @@ export default function QuizResult() {
                     </div>
                   ))
                 )}
+              </div>
+            </Card>
+
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-gray-900">Hồ sơ người học</h2>
+                  <p className="text-sm text-gray-500">Tổng hợp từ các bài quiz gần đây</p>
+                </div>
+                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${learnerTone.className}`}>
+                  {learnerTone.label}
+                </span>
+              </div>
+
+              <p className="mt-4 text-sm leading-6 text-gray-700">{attempt.learner_profile.summary}</p>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 text-center">
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xl font-bold text-gray-900">{attempt.learner_profile.attempts_analyzed}</p>
+                  <p className="text-xs text-gray-500">Bài đã phân tích</p>
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xl font-bold text-gray-900">
+                    {attempt.learner_profile.average_score == null ? "--" : `${attempt.learner_profile.average_score}%`}
+                  </p>
+                  <p className="text-xs text-gray-500">Điểm trung bình</p>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Nhóm đang tốt</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {attempt.learner_profile.strongest_focuses.length === 0 ? (
+                      <span className="text-sm text-gray-400">Chưa đủ dữ liệu.</span>
+                    ) : (
+                      attempt.learner_profile.strongest_focuses.map((item) => (
+                        <span
+                          key={`strong-${item.focus}`}
+                          className="rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-medium text-green-700"
+                        >
+                          {focusLabel(item.focus)} {item.accuracy}%
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Nhóm cần ưu tiên</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {attempt.learner_profile.weakest_focuses.length === 0 ? (
+                      <span className="text-sm text-gray-400">Chưa đủ dữ liệu.</span>
+                    ) : (
+                      attempt.learner_profile.weakest_focuses.map((item) => (
+                        <span
+                          key={`weak-${item.focus}`}
+                          className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700"
+                        >
+                          {focusLabel(item.focus)} {item.accuracy}%
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Đề xuất luyện tiếp</p>
+                  <ul className="mt-2 space-y-2">
+                    {attempt.learner_profile.recommendations.length === 0 ? (
+                      <li className="text-sm text-gray-400">Chưa có đề xuất.</li>
+                    ) : (
+                      attempt.learner_profile.recommendations.map((item) => (
+                        <li key={item} className="rounded-lg bg-gray-50 px-3 py-2 text-sm leading-6 text-gray-700">
+                          {item}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </div>
               </div>
             </Card>
           </section>
