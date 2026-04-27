@@ -2036,7 +2036,6 @@ async def list_quiz_sets(
 
 @router.delete("/{quiz_id}", status_code=204)
 async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin"))):
-    del user
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
@@ -2065,7 +2064,6 @@ async def delete_quiz(quiz_id: str, user: User = Depends(require_role("admin")))
 
 @router.get("/{quiz_id}/admin", response_model=QuizAdminResponse)
 async def get_admin_quiz(quiz_id: str, user: User = Depends(require_role("admin"))):
-    del user
     factory = get_session_factory()
     async with factory() as db:
         result = await db.execute(
@@ -2082,7 +2080,6 @@ async def get_admin_quiz(quiz_id: str, user: User = Depends(require_role("admin"
 
 @router.put("/{quiz_id}", response_model=QuizAdminResponse)
 async def update_quiz(quiz_id: str, req: QuizUpdateRequest, user: User = Depends(require_role("admin"))):
-    del user
     questions = _normalize_questions(req.questions)
     if len(questions) < 1:
         raise HTTPException(status_code=422, detail="At least one question is required")
@@ -2093,7 +2090,7 @@ async def update_quiz(quiz_id: str, req: QuizUpdateRequest, user: User = Depends
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(Quiz.id == quiz_id, User.role == "admin")
+            .where(Quiz.id == quiz_id, or_(User.role == "admin", Quiz.user_id == user.id))
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
@@ -2117,7 +2114,7 @@ async def get_quiz(quiz_id: str, user: User = Depends(get_current_user)):
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(Quiz.id == quiz_id, User.role == "admin")
+            .where(Quiz.id == quiz_id, or_(User.role == "admin", Quiz.user_id == user.id))
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
@@ -2135,7 +2132,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             select(Quiz)
             .options(selectinload(Quiz.quiz_set))
             .join(User, Quiz.user_id == User.id)
-            .where(Quiz.id == quiz_id, User.role == "admin")
+            .where(Quiz.id == quiz_id, or_(User.role == "admin", Quiz.user_id == user.id))
         )
         quiz = result.scalar_one_or_none()
         if not quiz:
