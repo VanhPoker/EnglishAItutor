@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { login, register } from "../lib/api";
 import { useAuthStore } from "../stores/authStore";
+import BrandMark from "../components/ui/BrandMark";
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -58,18 +59,18 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#f8fafc_0%,#eef6ff_55%,#f8fafc_100%)] p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Gia sư AI tiếng Anh</h1>
-          <p className="text-gray-500 mt-2">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <BrandMark size="lg" />
+          <p className="mt-3 text-gray-500">
             {isRegister ? "Tạo tài khoản học viên" : "Chào mừng quay lại"}
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="surface-card space-y-5 p-8"
+          className="surface-card space-y-5 border-white/70 bg-white/95 p-8 shadow-xl shadow-blue-900/5"
         >
           {isRegister && (
             <div>

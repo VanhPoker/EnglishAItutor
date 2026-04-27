@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, CheckCircle2, MessageSquare, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
 import { getPlans, type PlanInfo } from "../lib/api";
 import { useEffect, useState } from "react";
+import BrandMark from "../components/ui/BrandMark";
 
 function formatPrice(value: number) {
   return value === 0 ? "Miễn phí" : `${value.toLocaleString("vi-VN")}đ/tháng`;
@@ -28,17 +29,9 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
-      <header className="border-b border-gray-200 bg-white">
+      <header className="border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white">
-              <MessageSquare className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="font-bold">Gia sư AI tiếng Anh</p>
-              <p className="text-xs text-gray-500">Luyện nói, làm quiz, nhận xét bằng AI</p>
-            </div>
-          </div>
+          <BrandMark caption="Luyện nói, làm quiz, nhận xét bằng AI" />
           <Link to="/login" className="btn-primary inline-flex items-center gap-2">
             Đăng nhập
             <ArrowRight className="h-4 w-4" />
@@ -52,10 +45,12 @@ export default function LandingPage() {
           alt="Học tiếng Anh cùng nhóm bạn"
           className="absolute inset-0 h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-black/45" />
+        <div className="absolute inset-0 bg-slate-950/55" />
         <div className="relative mx-auto flex min-h-[620px] max-w-6xl items-center px-4 py-16">
           <div className="max-w-2xl text-white">
-            <p className="text-sm font-semibold uppercase">English AI Tutor</p>
+            <div className="mb-6 w-fit rounded-lg border border-white/20 bg-white/10 px-3 py-2 backdrop-blur">
+              <BrandMark title="English AI Tutor" caption="MVP luyện nói và quiz" inverted />
+            </div>
             <h1 className="mt-4 text-4xl font-bold leading-tight md:text-6xl">
               Luyện nói tiếng Anh có đo tiến bộ rõ ràng
             </h1>
