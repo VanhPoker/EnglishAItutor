@@ -5,7 +5,9 @@ English Tutor Agent entrypoint — wires LangGraph + LiveKit + Memory.
 import asyncio
 import json
 import os
+import re
 import time
+import unicodedata
 from typing import Optional
 from uuid import uuid4
 
@@ -23,6 +25,7 @@ from livekit.plugins import silero
 
 from app.agents.english_tutor.edge_tts_plugin import EdgeTTS
 from app.agents.english_tutor.graph import create_english_tutor_graph
+from app.agents.english_tutor.inline_quiz import build_inline_exercise_set
 from app.agents.english_tutor.session_metrics import (
     build_stats_payload,
     compute_session_scores,
@@ -39,9 +42,104 @@ from app.database.session_repo import (
 from app.memory.client import MemoryManager, initialize_memory_client
 
 FE_CHAT_TOPIC = os.getenv("FE_CHAT_TOPIC", "ai-text-stream")
+FE_QUIZ_WIDGET_TOPIC = os.getenv("FE_QUIZ_WIDGET_TOPIC", "ai-quiz-widget")
+EXERCISE_OFFER_TURN = int(os.getenv("EXERCISE_OFFER_TURN", "6"))
+
+EXERCISE_REQUEST_PHRASES = (
+    "lam bai tap",
+    "lam bai",
+    "bai tap",
+    "bai nua",
+    "bai khac",
+    "bai moi",
+    "them bai",
+    "lam them",
+    "lam them bai",
+    "lam them bai nua",
+    "cho toi lam bai",
+    "cho toi lam them bai",
+    "muon lam bai",
+    "luyen tap",
+    "on tap",
+    "thuc hanh",
+    "cau hoi",
+    "may cau hoi",
+    "bo de",
+    "de bai",
+    "quiz",
+    "kiem tra",
+    "kiem tra nhanh",
+    "test me",
+    "exercise",
+    "exercises",
+    "short exercise",
+    "another exercise",
+    "more exercise",
+    "more exercises",
+    "some exercises",
+    "do exercises",
+    "do some exercises",
+    "practice exercise",
+    "practice exercises",
+    "practice a short exercise",
+    "give me a quiz",
+    "give me questions",
+)
+AFFIRMATIVE_PHRASES = (
+    "yes",
+    "yeah",
+    "yep",
+    "ok",
+    "oke",
+    "okay",
+    "co",
+    "duoc",
+    "dong y",
+    "lam",
+    "lam di",
+    "bat dau",
+)
+NEGATIVE_PHRASES = (
+    "no",
+    "nope",
+    "khong",
+    "thoi",
+    "de sau",
+    "chua",
+)
 
 _active_tasks: set[asyncio.Task] = set()
 _memory_manager: Optional[MemoryManager] = None
+
+
+def _normalize_intent_text(text: str | None) -> str:
+    normalized = unicodedata.normalize("NFD", (text or "").lower()).replace("đ", "d")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    return " ".join(normalized.split())
+
+
+def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    for phrase in phrases:
+        if " " in phrase:
+            if phrase in text:
+                return True
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text):
+            return True
+    return False
+
+
+def _wants_exercise(text: str | None) -> bool:
+    return _contains_phrase(_normalize_intent_text(text), EXERCISE_REQUEST_PHRASES)
+
+
+def _is_affirmative(text: str | None) -> bool:
+    normalized = _normalize_intent_text(text)
+    return _contains_phrase(normalized, AFFIRMATIVE_PHRASES) and not _is_negative(text)
+
+
+def _is_negative(text: str | None) -> bool:
+    return _contains_phrase(_normalize_intent_text(text), NEGATIVE_PHRASES)
 
 
 def _float_env(name: str, default: float) -> float:
@@ -73,6 +171,13 @@ async def entrypoint(ctx: JobContext):
     """Main entrypoint for English Tutor voice assistant."""
     usage_collector = metrics.UsageCollector()
     start_time = time.time()
+    last_widget_turn = 0
+    last_widget_request_key = ""
+    last_widget_sent_at = 0.0
+    exercise_offer_pending = False
+    exercise_offer_asked = False
+    exercise_offer_turn = 0
+    exercise_flow_running = False
 
     logger.info(f"Starting English Tutor agent for room: {ctx.room.name}")
 
@@ -186,6 +291,11 @@ async def entrypoint(ctx: JobContext):
             text = await reader.read_all()
             logger.info(f"Text from {participant_identity}: {text}")
 
+            if _wants_exercise(text):
+                handled = await maybe_handle_exercise_flow(force_request_text=text)
+                if handled:
+                    return
+
             chat_ctx = session._chat_ctx.copy()
             chat_ctx.add_message(role="user", content=text, interrupted=True)
             stream = session.llm.chat(chat_ctx=chat_ctx)
@@ -199,6 +309,7 @@ async def entrypoint(ctx: JobContext):
             response_text = "".join(response_parts).strip()
             if response_text:
                 await session.say(response_text, allow_interruptions=False)
+            await maybe_handle_exercise_flow(force_request_text=text)
         except Exception as e:
             logger.error(f"Error handling text stream: {e}", exc_info=True)
 
@@ -206,6 +317,110 @@ async def entrypoint(ctx: JobContext):
         task = asyncio.create_task(handle_text_stream_async(reader, participant_identity))
         _active_tasks.add(task)
         task.add_done_callback(lambda t: _active_tasks.discard(t))
+
+    async def send_quiz_widget(payload: dict):
+        writer = await ctx.room.local_participant.stream_text(topic=FE_QUIZ_WIDGET_TOPIC)
+        await writer.write(json.dumps(payload, ensure_ascii=False))
+        await writer.aclose()
+
+    async def emit_exercise_set(
+        state_values: dict,
+        turn_number: int,
+        request_text: str | None = None,
+    ) -> bool:
+        nonlocal last_widget_turn, last_widget_request_key, last_widget_sent_at
+
+        request_key = f"{turn_number}:{_normalize_intent_text(request_text)[:120]}"
+        if request_key == last_widget_request_key and time.time() - last_widget_sent_at < 8:
+            return False
+
+        if not request_text and turn_number == last_widget_turn:
+            return False
+
+        payload = build_inline_exercise_set(state_values)
+        if not payload:
+            return False
+
+        await send_quiz_widget(payload)
+        last_widget_turn = turn_number
+        last_widget_request_key = request_key
+        last_widget_sent_at = time.time()
+        logger.info("Inline exercise set emitted for turn {}", turn_number)
+        return True
+
+    async def maybe_handle_exercise_flow(force_request_text: str | None = None) -> bool:
+        nonlocal exercise_offer_pending
+        nonlocal exercise_offer_asked
+        nonlocal exercise_offer_turn
+        nonlocal exercise_flow_running
+
+        if exercise_flow_running:
+            return False
+
+        try:
+            exercise_flow_running = True
+            graph_state = await graph.aget_state(graph_config)
+            state_values = graph_state.values or {}
+            session_stats = state_values.get("session_stats") or {}
+            last_turn = session_stats.get("last_turn") or {}
+            turn_number = int(last_turn.get("turn") or 1)
+            user_text = str(force_request_text or last_turn.get("user_text") or "")
+
+            if not user_text:
+                return False
+
+            explicit_request = _wants_exercise(user_text)
+            logger.info(
+                "Exercise flow check: turn={}, explicit_request={}, text={}",
+                turn_number,
+                explicit_request,
+                user_text[:80],
+            )
+
+            if exercise_offer_pending:
+                if _is_negative(user_text):
+                    exercise_offer_pending = False
+                    return
+
+                if _is_affirmative(user_text) or explicit_request:
+                    emitted = await emit_exercise_set(state_values, turn_number, user_text)
+                    exercise_offer_pending = False
+                    if emitted:
+                        await session.say(
+                            "Great. I opened a short exercise set from this session. Try it now.",
+                            allow_interruptions=False,
+                        )
+                    return emitted
+
+                if turn_number - exercise_offer_turn >= 3:
+                    exercise_offer_pending = False
+
+            if explicit_request:
+                emitted = await emit_exercise_set(state_values, turn_number, user_text)
+                if emitted:
+                    await session.say(
+                        "Sure. I opened a short exercise set from what we have practiced.",
+                        allow_interruptions=False,
+                    )
+                return emitted
+
+            if not exercise_offer_asked and turn_number >= EXERCISE_OFFER_TURN:
+                exercise_offer_pending = True
+                exercise_offer_asked = True
+                exercise_offer_turn = turn_number
+                await session.say(
+                    "Would you like to do a short exercise set from what we have practiced? "
+                    "Say yes and I will open it here.",
+                    allow_interruptions=False,
+                )
+                return True
+
+            return False
+        except Exception as exc:
+            logger.warning(f"Inline exercise flow skipped: {exc}")
+            return False
+        finally:
+            exercise_flow_running = False
 
     ctx.room.register_text_stream_handler(FE_CHAT_TOPIC, handle_text_stream)
     logger.info(f"Registered text stream handler on topic: {FE_CHAT_TOPIC}")
@@ -225,6 +440,12 @@ async def entrypoint(ctx: JobContext):
     @session.on("agent_started_speaking")
     def on_agent_started_speaking():
         logger.debug("Agent speaking...")
+
+    @session.on("agent_speech_committed")
+    def on_agent_speech_committed():
+        task = asyncio.create_task(maybe_handle_exercise_flow())
+        _active_tasks.add(task)
+        task.add_done_callback(lambda t: _active_tasks.discard(t))
 
     @session.on("user_speech_committed")
     def on_user_speech_committed():

@@ -9,10 +9,14 @@ import {
   ConnectionState,
 } from "livekit-client";
 import { getToken, type TokenRequest } from "../lib/api";
-import { useChatStore } from "../stores/chatStore";
+import { useChatStore, type InlineQuizWidget } from "../stores/chatStore";
 
 const CHAT_TOPIC = "ai-text-stream";
+const QUIZ_WIDGET_TOPIC = "ai-quiz-widget";
 const SECURE_LIVEKIT_URL = "wss://livekit.4.145.98.216.sslip.io";
+const DEFAULT_TURN_HOST = "4.145.98.216";
+const DEFAULT_TURN_USERNAME = "turnuser";
+const DEFAULT_TURN_CREDENTIAL = "turnpass";
 type ChatRole = "user" | "assistant";
 type TranscriptBuffer = { texts: string[]; ids: Set<string> };
 
@@ -65,6 +69,10 @@ function combineTranscriptParts(parts: string[]) {
   return combined.join(" ").replace(/\s+/g, " ").trim();
 }
 
+function isLoopbackHost(hostname: string) {
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
 function getLiveKitUrl() {
   const configuredUrl = import.meta.env.VITE_LIVEKIT_URL?.trim();
   if (configuredUrl) {
@@ -81,11 +89,41 @@ function getLiveKitUrl() {
     return SECURE_LIVEKIT_URL;
   }
 
-  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
+  if (isLoopbackHost(window.location.hostname)) {
     return "ws://127.0.0.1:7880";
   }
 
   return `ws://${window.location.hostname}:7880`;
+}
+
+function getRtcConfig(): RTCConfiguration {
+  const configuredTurnHost = import.meta.env.VITE_TURN_HOST?.trim();
+  const useLocalForwardedTurn =
+    !configuredTurnHost && isLoopbackHost(window.location.hostname);
+  const turnHost =
+    configuredTurnHost || (useLocalForwardedTurn ? "127.0.0.1" : DEFAULT_TURN_HOST);
+  const turnUsername =
+    import.meta.env.VITE_TURN_USERNAME?.trim() || DEFAULT_TURN_USERNAME;
+  const turnCredential =
+    import.meta.env.VITE_TURN_CREDENTIAL?.trim() || DEFAULT_TURN_CREDENTIAL;
+  const forceRelay = import.meta.env.VITE_FORCE_TURN_RELAY === "true";
+  const turnUrls = useLocalForwardedTurn
+    ? [`turn:${turnHost}:3478?transport=tcp`]
+    : [
+        `turn:${turnHost}:3478?transport=udp`,
+        `turn:${turnHost}:3478?transport=tcp`,
+      ];
+
+  return {
+    iceTransportPolicy: forceRelay ? "relay" : "all",
+    iceServers: [
+      {
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      },
+    ],
+  };
 }
 
 export function useLiveKit() {
@@ -100,7 +138,7 @@ export function useLiveKit() {
   );
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const { addMessage, setConnected, setCurrentTranscript } = useChatStore();
+  const { addMessage, addQuizWidget, setConnected, setCurrentTranscript } = useChatStore();
 
   const connect = useCallback(
     async (req: TokenRequest) => {
@@ -273,10 +311,39 @@ export function useLiveKit() {
         }
       });
 
-      await room.connect(getLiveKitUrl(), token);
+      room.registerTextStreamHandler(QUIZ_WIDGET_TOPIC, async (reader) => {
+        try {
+          const textStream = reader as any;
+          const raw =
+            typeof textStream.readAll === "function"
+              ? await textStream.readAll()
+              : await (async () => {
+                  let merged = "";
+                  if (typeof textStream[Symbol.asyncIterator] === "function") {
+                    for await (const chunk of textStream) {
+                      merged += String(chunk ?? "");
+                    }
+                  }
+                  return merged;
+                })();
+
+          const payload = JSON.parse(raw || "{}") as InlineQuizWidget;
+          const hasExerciseQuestions = Array.isArray(payload?.questions) && payload.questions.length > 0;
+          const hasLegacyQuestion = Array.isArray(payload?.choices) && payload.choices.length > 0;
+          if (!payload?.id || (!hasExerciseQuestions && !hasLegacyQuestion)) return;
+          addQuizWidget(payload);
+        } catch (error) {
+          console.error("Failed to read quiz widget stream:", error);
+        }
+      });
+
+      await room.connect(getLiveKitUrl(), token, {
+        rtcConfig: getRtcConfig(),
+        peerConnectionTimeout: 25_000,
+      });
       return room;
     },
-    [addMessage, setConnected, setCurrentTranscript]
+    [addMessage, addQuizWidget, setConnected, setCurrentTranscript]
   );
 
   const disconnect = useCallback(() => {

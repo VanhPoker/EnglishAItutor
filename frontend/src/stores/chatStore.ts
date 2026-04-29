@@ -18,7 +18,9 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  kind?: "text" | "quiz_widget";
   corrections?: CorrectionItem[];
+  quizWidget?: InlineQuizWidget;
 }
 
 export interface CorrectionItem {
@@ -26,6 +28,43 @@ export interface CorrectionItem {
   original: string;
   correction: string;
   explanation: string;
+}
+
+export interface InlineQuizChoice {
+  id: string;
+  text: string;
+}
+
+export interface InlineQuizQuestion {
+  id: string;
+  prompt: string;
+  focus: string;
+  question_type: "multiple_choice";
+  choices: InlineQuizChoice[];
+  correct_choice_id: string;
+  explanation: string;
+  source_text?: string;
+}
+
+export interface InlineQuizWidget {
+  id: string;
+  type?: "exercise_set";
+  title: string;
+  description?: string;
+  topic?: string;
+  level?: string;
+  questions: InlineQuizQuestion[];
+  answers?: Record<string, string>;
+  submitted?: boolean;
+
+  // Legacy single-question payload support for old agent containers.
+  prompt?: string;
+  focus?: string;
+  question_type?: "multiple_choice";
+  choices?: InlineQuizChoice[];
+  correct_choice_id?: string;
+  explanation?: string;
+  source_text?: string;
 }
 
 interface ChatState {
@@ -41,7 +80,41 @@ interface ChatState {
   setAgentSpeaking: (val: boolean) => void;
   setUserSpeaking: (val: boolean) => void;
   setCurrentTranscript: (val: string) => void;
+  addQuizWidget: (widget: InlineQuizWidget) => void;
+  answerQuizWidget: (widgetId: string, questionId: string, choiceId: string) => void;
+  submitQuizWidget: (widgetId: string) => void;
   clearMessages: () => void;
+}
+
+function normalizeQuizWidget(widget: InlineQuizWidget): InlineQuizWidget {
+  if (widget.questions?.length) {
+    return { ...widget, answers: widget.answers ?? {} };
+  }
+
+  if (widget.prompt && widget.choices?.length && widget.correct_choice_id) {
+    return {
+      id: widget.id,
+      type: "exercise_set",
+      title: widget.title || "Bộ bài tập nhanh trong phiên",
+      description: "Làm nhanh câu hỏi vừa được tạo trong phiên luyện nói.",
+      questions: [
+        {
+          id: "q-legacy",
+          prompt: widget.prompt,
+          focus: widget.focus || "grammar",
+          question_type: "multiple_choice",
+          choices: widget.choices,
+          correct_choice_id: widget.correct_choice_id,
+          explanation: widget.explanation || "Đây là đáp án tự nhiên hơn trong ngữ cảnh vừa luyện.",
+          source_text: widget.source_text,
+        },
+      ],
+      answers: {},
+      submitted: widget.submitted,
+    };
+  }
+
+  return { ...widget, questions: [], answers: widget.answers ?? {} };
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -97,5 +170,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setAgentSpeaking: (val) => set({ isAgentSpeaking: val }),
   setUserSpeaking: (val) => set({ isUserSpeaking: val }),
   setCurrentTranscript: (val) => set({ currentTranscript: val }),
+  addQuizWidget: (widget) =>
+    set((state) => {
+      const normalizedWidget = normalizeQuizWidget(widget);
+      if (!normalizedWidget.questions.length) return state;
+
+      const existing = state.messages.find(
+        (message) => message.kind === "quiz_widget" && message.quizWidget?.id === normalizedWidget.id
+      );
+      if (existing) return state;
+
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            kind: "quiz_widget",
+            timestamp: Date.now(),
+            quizWidget: normalizedWidget,
+          },
+        ],
+      };
+    }),
+  answerQuizWidget: (widgetId, questionId, choiceId) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.kind !== "quiz_widget" || message.quizWidget?.id !== widgetId) {
+          return message;
+        }
+
+        const answers = message.quizWidget.answers ?? {};
+        return {
+          ...message,
+          quizWidget: {
+            ...message.quizWidget,
+            answers: {
+              ...answers,
+              [questionId]: choiceId,
+            },
+          },
+        };
+      }),
+    })),
+  submitQuizWidget: (widgetId) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.kind !== "quiz_widget" || message.quizWidget?.id !== widgetId) {
+          return message;
+        }
+
+        return {
+          ...message,
+          quizWidget: {
+            ...message.quizWidget,
+            submitted: true,
+          },
+        };
+      }),
+    })),
   clearMessages: () => set({ messages: [] }),
 }));

@@ -17,6 +17,7 @@ const focusLabels: Record<string, string> = {
   fluency: "Độ trôi chảy",
   structure: "Cấu trúc câu",
   comprehension: "Đọc hiểu",
+  conversation: "Hội thoại",
   speaking: "Nói",
   listening: "Nghe",
 };
