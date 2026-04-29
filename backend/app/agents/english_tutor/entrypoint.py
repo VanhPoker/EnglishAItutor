@@ -23,6 +23,10 @@ from livekit.agents import (
 )
 from livekit.plugins import silero
 
+from app.agents.english_tutor.chat_widgets import (
+    build_mistake_notebook_widget,
+    build_session_recap_widget,
+)
 from app.agents.english_tutor.edge_tts_plugin import EdgeTTS
 from app.agents.english_tutor.graph import create_english_tutor_graph
 from app.agents.english_tutor.inline_quiz import build_inline_exercise_set
@@ -43,7 +47,9 @@ from app.memory.client import MemoryManager, initialize_memory_client
 
 FE_CHAT_TOPIC = os.getenv("FE_CHAT_TOPIC", "ai-text-stream")
 FE_QUIZ_WIDGET_TOPIC = os.getenv("FE_QUIZ_WIDGET_TOPIC", "ai-quiz-widget")
+FE_CHAT_WIDGET_TOPIC = os.getenv("FE_CHAT_WIDGET_TOPIC", "ai-chat-widget")
 EXERCISE_OFFER_TURN = int(os.getenv("EXERCISE_OFFER_TURN", "6"))
+SESSION_RECAP_TURN = int(os.getenv("SESSION_RECAP_TURN", "6"))
 
 EXERCISE_REQUEST_PHRASES = (
     "lam bai tap",
@@ -107,6 +113,32 @@ NEGATIVE_PHRASES = (
     "de sau",
     "chua",
 )
+RECAP_REQUEST_PHRASES = (
+    "tong ket",
+    "tom tat",
+    "review phien",
+    "nhan xet",
+    "danh gia",
+    "ket qua",
+    "recap",
+    "summary",
+    "review my session",
+    "how am i doing",
+)
+MISTAKE_NOTEBOOK_PHRASES = (
+    "loi sai",
+    "so loi",
+    "cac loi",
+    "xem loi",
+    "sua loi",
+    "diem yeu",
+    "mistake",
+    "mistakes",
+    "my mistakes",
+    "what mistakes",
+    "weakness",
+    "weak points",
+)
 
 _active_tasks: set[asyncio.Task] = set()
 _memory_manager: Optional[MemoryManager] = None
@@ -131,6 +163,14 @@ def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
 
 def _wants_exercise(text: str | None) -> bool:
     return _contains_phrase(_normalize_intent_text(text), EXERCISE_REQUEST_PHRASES)
+
+
+def _wants_recap(text: str | None) -> bool:
+    return _contains_phrase(_normalize_intent_text(text), RECAP_REQUEST_PHRASES)
+
+
+def _wants_mistake_notebook(text: str | None) -> bool:
+    return _contains_phrase(_normalize_intent_text(text), MISTAKE_NOTEBOOK_PHRASES)
 
 
 def _is_affirmative(text: str | None) -> bool:
@@ -178,6 +218,8 @@ async def entrypoint(ctx: JobContext):
     exercise_offer_asked = False
     exercise_offer_turn = 0
     exercise_flow_running = False
+    recap_widget_sent = False
+    study_widget_running = False
 
     logger.info(f"Starting English Tutor agent for room: {ctx.room.name}")
 
@@ -296,6 +338,11 @@ async def entrypoint(ctx: JobContext):
                 if handled:
                     return
 
+            if _wants_recap(text) or _wants_mistake_notebook(text):
+                handled = await maybe_handle_study_widget(force_request_text=text)
+                if handled:
+                    return
+
             chat_ctx = session._chat_ctx.copy()
             chat_ctx.add_message(role="user", content=text, interrupted=True)
             stream = session.llm.chat(chat_ctx=chat_ctx)
@@ -309,7 +356,9 @@ async def entrypoint(ctx: JobContext):
             response_text = "".join(response_parts).strip()
             if response_text:
                 await session.say(response_text, allow_interruptions=False)
-            await maybe_handle_exercise_flow(force_request_text=text)
+            handled = await maybe_handle_exercise_flow(force_request_text=text)
+            if not handled:
+                await maybe_handle_study_widget(force_request_text=text)
         except Exception as e:
             logger.error(f"Error handling text stream: {e}", exc_info=True)
 
@@ -320,6 +369,11 @@ async def entrypoint(ctx: JobContext):
 
     async def send_quiz_widget(payload: dict):
         writer = await ctx.room.local_participant.stream_text(topic=FE_QUIZ_WIDGET_TOPIC)
+        await writer.write(json.dumps(payload, ensure_ascii=False))
+        await writer.aclose()
+
+    async def send_chat_widget(payload: dict):
+        writer = await ctx.room.local_participant.stream_text(topic=FE_CHAT_WIDGET_TOPIC)
         await writer.write(json.dumps(payload, ensure_ascii=False))
         await writer.aclose()
 
@@ -380,7 +434,7 @@ async def entrypoint(ctx: JobContext):
             if exercise_offer_pending:
                 if _is_negative(user_text):
                     exercise_offer_pending = False
-                    return
+                    return False
 
                 if _is_affirmative(user_text) or explicit_request:
                     emitted = await emit_exercise_set(state_values, turn_number, user_text)
@@ -422,6 +476,68 @@ async def entrypoint(ctx: JobContext):
         finally:
             exercise_flow_running = False
 
+    async def maybe_handle_study_widget(
+        force_request_text: str | None = None,
+        *,
+        auto: bool = False,
+    ) -> bool:
+        nonlocal recap_widget_sent
+        nonlocal study_widget_running
+
+        if study_widget_running:
+            return False
+
+        try:
+            study_widget_running = True
+            graph_state = await graph.aget_state(graph_config)
+            state_values = graph_state.values or {}
+            session_stats = state_values.get("session_stats") or {}
+            last_turn = session_stats.get("last_turn") or {}
+            turn_number = int(last_turn.get("turn") or 0)
+            user_text = str(force_request_text or last_turn.get("user_text") or "")
+
+            wants_mistakes = _wants_mistake_notebook(user_text)
+            wants_recap = _wants_recap(user_text)
+
+            if wants_mistakes:
+                payload = build_mistake_notebook_widget(state_values)
+                if not payload:
+                    return False
+                await send_chat_widget(payload)
+                await session.say(
+                    "I opened your mistake notebook from this session.",
+                    allow_interruptions=False,
+                )
+                logger.info("Mistake notebook widget emitted for turn {}", turn_number)
+                return True
+
+            should_auto_recap = auto and not recap_widget_sent and turn_number >= SESSION_RECAP_TURN
+            if wants_recap or should_auto_recap:
+                payload = build_session_recap_widget(state_values, level)
+                if not payload:
+                    return False
+                await send_chat_widget(payload)
+                recap_widget_sent = True
+                if wants_recap:
+                    await session.say(
+                        "I added a quick recap of this practice session.",
+                        allow_interruptions=False,
+                    )
+                logger.info("Session recap widget emitted for turn {}", turn_number)
+                return True
+
+            return False
+        except Exception as exc:
+            logger.warning(f"Study widget flow skipped: {exc}")
+            return False
+        finally:
+            study_widget_running = False
+
+    async def handle_agent_speech_committed():
+        handled = await maybe_handle_exercise_flow()
+        if not handled:
+            await maybe_handle_study_widget(auto=True)
+
     ctx.room.register_text_stream_handler(FE_CHAT_TOPIC, handle_text_stream)
     logger.info(f"Registered text stream handler on topic: {FE_CHAT_TOPIC}")
 
@@ -443,7 +559,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("agent_speech_committed")
     def on_agent_speech_committed():
-        task = asyncio.create_task(maybe_handle_exercise_flow())
+        task = asyncio.create_task(handle_agent_speech_committed())
         _active_tasks.add(task)
         task.add_done_callback(lambda t: _active_tasks.discard(t))
 

@@ -9,10 +9,11 @@ import {
   ConnectionState,
 } from "livekit-client";
 import { getToken, type TokenRequest } from "../lib/api";
-import { useChatStore, type InlineQuizWidget } from "../stores/chatStore";
+import { useChatStore, type ChatWidget, type InlineQuizWidget } from "../stores/chatStore";
 
 const CHAT_TOPIC = "ai-text-stream";
 const QUIZ_WIDGET_TOPIC = "ai-quiz-widget";
+const CHAT_WIDGET_TOPIC = "ai-chat-widget";
 const SECURE_LIVEKIT_URL = "wss://livekit.4.145.98.216.sslip.io";
 const DEFAULT_TURN_HOST = "4.145.98.216";
 const DEFAULT_TURN_USERNAME = "turnuser";
@@ -138,7 +139,7 @@ export function useLiveKit() {
   );
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const { addMessage, addQuizWidget, setConnected, setCurrentTranscript } = useChatStore();
+  const { addMessage, addQuizWidget, addChatWidget, setConnected, setAgentReady, setCurrentTranscript } = useChatStore();
 
   const connect = useCallback(
     async (req: TokenRequest) => {
@@ -152,6 +153,7 @@ export function useLiveKit() {
         if (timer) window.clearTimeout(timer);
       });
       transcriptTimersRef.current = {};
+      setAgentReady(false);
       setCurrentTranscript("");
 
       const room = new Room({
@@ -289,6 +291,9 @@ export function useLiveKit() {
 
           if (segment.final) {
             setCurrentTranscript("");
+            if (role === "assistant") {
+              setAgentReady(true);
+            }
             queueTranscriptMessage(role, text, segment.id);
           } else {
             setCurrentTranscript(`${label}: ${text}`);
@@ -337,13 +342,37 @@ export function useLiveKit() {
         }
       });
 
+      room.registerTextStreamHandler(CHAT_WIDGET_TOPIC, async (reader) => {
+        try {
+          const textStream = reader as any;
+          const raw =
+            typeof textStream.readAll === "function"
+              ? await textStream.readAll()
+              : await (async () => {
+                  let merged = "";
+                  if (typeof textStream[Symbol.asyncIterator] === "function") {
+                    for await (const chunk of textStream) {
+                      merged += String(chunk ?? "");
+                    }
+                  }
+                  return merged;
+                })();
+
+          const payload = JSON.parse(raw || "{}") as ChatWidget;
+          if (!payload?.id || !payload?.type || !payload?.title) return;
+          addChatWidget(payload);
+        } catch (error) {
+          console.error("Failed to read chat widget stream:", error);
+        }
+      });
+
       await room.connect(getLiveKitUrl(), token, {
         rtcConfig: getRtcConfig(),
         peerConnectionTimeout: 25_000,
       });
       return room;
     },
-    [addMessage, addQuizWidget, setConnected, setCurrentTranscript]
+    [addChatWidget, addMessage, addQuizWidget, setAgentReady, setConnected, setCurrentTranscript]
   );
 
   const disconnect = useCallback(() => {
@@ -360,14 +389,15 @@ export function useLiveKit() {
       roomRef.current.disconnect();
       roomRef.current = null;
       setConnected(false);
+      setAgentReady(false);
       setCurrentTranscript("");
       setLastError(null);
     }
-  }, [addMessage, setConnected, setCurrentTranscript]);
+  }, [addMessage, setAgentReady, setConnected, setCurrentTranscript]);
 
   const sendText = useCallback(async (text: string) => {
     const room = roomRef.current;
-    if (!room || sendingRef.current) return;
+    if (!room || sendingRef.current || !useChatStore.getState().agentReady) return;
 
     sendingRef.current = true;
     addMessage({ role: "user", content: text });

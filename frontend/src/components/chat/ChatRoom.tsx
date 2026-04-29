@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ConnectionState } from "livekit-client";
-import { Clock, CreditCard, Loader2, Wifi, WifiOff } from "lucide-react";
+import { Loader2, LockKeyhole, Wifi, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useLiveKit } from "../../hooks/useLiveKit";
 import { useUserStore } from "../../stores/userStore";
@@ -25,25 +25,55 @@ export default function ChatRoom() {
   const { topic, level } = useUserStore();
   const navigate = useNavigate();
   const isConnected = useChatStore((s) => s.isConnected);
+  const agentReady = useChatStore((s) => s.agentReady);
+  const messages = useChatStore((s) => s.messages);
+  const interactionLocked = useChatStore((s) => s.interactionLocked);
+  const addChatWidget = useChatStore((s) => s.addChatWidget);
+  const setInteractionLocked = useChatStore((s) => s.setInteractionLocked);
   const [micEnabled, setMicEnabled] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [quotaMessage, setQuotaMessage] = useState<string | null>(null);
 
   const handleConnect = useCallback(async () => {
     setConnecting(true);
-    setQuotaMessage(null);
+    setInteractionLocked(false);
     try {
       await connect({ topic, level });
     } catch (err) {
       console.error("Không kết nối được:", err);
       const message = err instanceof Error ? err.message : "Không bắt đầu được phiên học.";
       if (isQuotaErrorMessage(message)) {
-        setQuotaMessage(message);
+        setInteractionLocked(true, message);
+        addChatWidget({
+          id: `chat-quota-${Date.now()}`,
+          type: "paywall",
+          title: "Bạn đã hết lượt chat hôm nay",
+          description:
+            "Gia sư AI đang tạm khóa chat và micro cho tới khi bạn nâng cấp gói hoặc quay lại vào ngày mai.",
+          badge: "Đã khóa phiên",
+          locked: true,
+          highlights: [
+            message,
+            "Gói Plus mở 25 lượt chat với gia sư AI mỗi ngày.",
+            "Gói Ultra mở không giới hạn chat và quiz.",
+          ],
+          actions: [
+            { label: "Xem gói học", to: "/billing?reason=chat-quota", variant: "primary" },
+            { label: "Về trang học tập", to: "/", variant: "secondary" },
+          ],
+        });
+      } else {
+        addChatWidget({
+          id: `connect-error-${Date.now()}`,
+          type: "session_recap",
+          title: "Chưa bắt đầu được phiên học",
+          description: message,
+          badge: "Lỗi kết nối",
+        });
       }
     } finally {
       setConnecting(false);
     }
-  }, [connect, topic, level]);
+  }, [addChatWidget, connect, level, setInteractionLocked, topic]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();
@@ -52,57 +82,62 @@ export default function ChatRoom() {
   }, [disconnect, navigate]);
 
   const handleToggleMic = useCallback(async () => {
+    if (interactionLocked || !agentReady) return;
     const enabled = await toggleMicrophone();
     if (enabled !== undefined) setMicEnabled(enabled);
-  }, [toggleMicrophone]);
+  }, [agentReady, interactionLocked, toggleMicrophone]);
 
   useEffect(() => {
-    if (!quotaMessage) return;
-    const timer = window.setTimeout(() => {
-      navigate("/billing?reason=chat-quota");
-    }, 3200);
-    return () => window.clearTimeout(timer);
-  }, [navigate, quotaMessage]);
+    if (!isConnected) setMicEnabled(false);
+  }, [isConnected]);
+
+  const lockedInputPlaceholder = interactionLocked
+    ? "Bạn đã hết lượt chat hôm nay. Hãy nâng cấp gói hoặc quay lại vào ngày mai."
+    : isConnected && !agentReady
+    ? "Gia sư đang khởi động, chờ lời chào xong rồi hãy nhắn..."
+    : "Nhập câu tiếng Anh của bạn...";
 
   // Not connected — show connect screen
   if (!isConnected) {
+    if (interactionLocked || messages.length > 0) {
+      return (
+        <div className="flex h-full flex-1 flex-col">
+          <div className="flex items-center justify-between border-b border-gray-200/50 bg-white/60 px-4 py-2">
+            <div className="flex items-center gap-2">
+              <LockKeyhole className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-xs text-gray-500">
+                {interactionLocked ? "Chat và micro đang bị khóa" : "Chưa kết nối"}
+              </span>
+            </div>
+            {!interactionLocked && (
+              <button
+                onClick={handleConnect}
+                disabled={connecting}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {connecting ? "Đang kết nối..." : "Bắt đầu lại"}
+              </button>
+            )}
+          </div>
+          <MessageList />
+          <div className="border-t border-gray-200/30">
+            <VoiceControls
+              micEnabled={false}
+              onToggleMic={handleToggleMic}
+              isConnected={false}
+            />
+            <InputBar
+              onSend={sendText}
+              disabled
+              placeholder={lockedInputPlaceholder}
+            />
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="relative flex-1 flex items-center justify-center">
-        {quotaMessage && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 px-4 backdrop-blur-sm">
-            <div className="w-full max-w-sm rounded-lg border border-blue-100 bg-white p-5 shadow-lg">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                <CreditCard className="h-6 w-6" />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900">
-                Bạn đã hết lượt chat hôm nay
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-gray-600">
-                {quotaMessage} Bạn có thể nâng cấp gói học hoặc quay lại vào ngày mai để tiếp tục luyện với gia sư AI.
-              </p>
-              <div className="mt-3 flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                <Clock className="h-4 w-4" />
-                Tự chuyển sang màn gói học trong vài giây.
-              </div>
-              <div className="mt-4 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => navigate("/billing?reason=chat-quota")}
-                  className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  Xem gói học
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQuotaMessage(null)}
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                >
-                  Để sau
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         <div className="text-center space-y-4">
           <div className="w-16 h-16 mx-auto bg-primary-100 rounded-full flex items-center justify-center">
             <WifiOff className="w-8 h-8 text-primary-400" />
@@ -168,9 +203,13 @@ export default function ChatRoom() {
         <VoiceControls
           micEnabled={micEnabled}
           onToggleMic={handleToggleMic}
-          isConnected={isConnected}
+          isConnected={isConnected && agentReady && !interactionLocked}
         />
-        <InputBar onSend={sendText} disabled={!isConnected} />
+        <InputBar
+          onSend={sendText}
+          disabled={!isConnected || !agentReady || interactionLocked}
+          placeholder={lockedInputPlaceholder}
+        />
       </div>
     </div>
   );

@@ -18,9 +18,10 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
-  kind?: "text" | "quiz_widget";
+  kind?: "text" | "quiz_widget" | "chat_widget";
   corrections?: CorrectionItem[];
   quizWidget?: InlineQuizWidget;
+  chatWidget?: ChatWidget;
 }
 
 export interface CorrectionItem {
@@ -67,20 +68,61 @@ export interface InlineQuizWidget {
   source_text?: string;
 }
 
+export type ChatWidgetType = "paywall" | "session_recap" | "mistake_notebook";
+
+export interface ChatWidgetAction {
+  label: string;
+  to?: string;
+  variant?: "primary" | "secondary";
+}
+
+export interface ChatWidgetMetric {
+  label: string;
+  value: string;
+  tone?: "neutral" | "good" | "warning";
+}
+
+export interface ChatWidgetMistake {
+  error_type: string;
+  original: string;
+  correction: string;
+  explanation?: string;
+  count?: number;
+}
+
+export interface ChatWidget {
+  id: string;
+  type: ChatWidgetType;
+  title: string;
+  description?: string;
+  badge?: string;
+  locked?: boolean;
+  metrics?: ChatWidgetMetric[];
+  highlights?: string[];
+  mistakes?: ChatWidgetMistake[];
+  actions?: ChatWidgetAction[];
+}
+
 interface ChatState {
   messages: ChatMessage[];
   isConnected: boolean;
   isAgentSpeaking: boolean;
   isUserSpeaking: boolean;
+  agentReady: boolean;
   currentTranscript: string;
+  interactionLocked: boolean;
+  lockReason: string | null;
 
   addMessage: (msg: Omit<ChatMessage, "id" | "timestamp">) => void;
   updateLastAssistantMessage: (content: string) => void;
   setConnected: (val: boolean) => void;
   setAgentSpeaking: (val: boolean) => void;
   setUserSpeaking: (val: boolean) => void;
+  setAgentReady: (val: boolean) => void;
   setCurrentTranscript: (val: string) => void;
+  setInteractionLocked: (locked: boolean, reason?: string | null) => void;
   addQuizWidget: (widget: InlineQuizWidget) => void;
+  addChatWidget: (widget: ChatWidget) => void;
   answerQuizWidget: (widgetId: string, questionId: string, choiceId: string) => void;
   submitQuizWidget: (widgetId: string) => void;
   clearMessages: () => void;
@@ -122,7 +164,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isConnected: false,
   isAgentSpeaking: false,
   isUserSpeaking: false,
+  agentReady: false,
   currentTranscript: "",
+  interactionLocked: false,
+  lockReason: null,
 
   addMessage: (msg) =>
     set((s) => ({
@@ -166,10 +211,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages: msgs };
     }),
 
-  setConnected: (val) => set({ isConnected: val }),
+  setConnected: (val) => set({ isConnected: val, agentReady: val ? get().agentReady : false }),
   setAgentSpeaking: (val) => set({ isAgentSpeaking: val }),
   setUserSpeaking: (val) => set({ isUserSpeaking: val }),
+  setAgentReady: (val) => set({ agentReady: val }),
   setCurrentTranscript: (val) => set({ currentTranscript: val }),
+  setInteractionLocked: (locked, reason = null) =>
+    set({
+      interactionLocked: locked,
+      lockReason: locked ? reason : null,
+    }),
   addQuizWidget: (widget) =>
     set((state) => {
       const normalizedWidget = normalizeQuizWidget(widget);
@@ -190,6 +241,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
             kind: "quiz_widget",
             timestamp: Date.now(),
             quizWidget: normalizedWidget,
+          },
+        ],
+      };
+    }),
+  addChatWidget: (widget) =>
+    set((state) => {
+      const existing = state.messages.find(
+        (message) => message.kind === "chat_widget" && message.chatWidget?.id === widget.id
+      );
+      if (existing) return state;
+
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            kind: "chat_widget",
+            timestamp: Date.now(),
+            chatWidget: widget,
           },
         ],
       };
@@ -230,5 +302,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
       }),
     })),
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () =>
+    set({ messages: [], agentReady: false, interactionLocked: false, lockReason: null }),
 }));

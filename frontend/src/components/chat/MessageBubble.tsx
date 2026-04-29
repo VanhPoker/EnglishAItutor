@@ -4,6 +4,7 @@ import type { ChatMessage } from "../../stores/chatStore";
 import { useChatStore } from "../../stores/chatStore";
 import { focusLabel } from "../../lib/labels";
 import InlineQuizWidget from "./InlineQuizWidget";
+import ChatWidgetCard from "./ChatWidgetCard";
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -32,14 +33,14 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
 
       {/* Bubble */}
-      <div className={`${message.kind === "quiz_widget" ? "max-w-[85%]" : "max-w-[75%]"}`}>
+      <div className={`${message.kind === "quiz_widget" || message.kind === "chat_widget" ? "max-w-[85%]" : "max-w-[75%]"}`}>
         <div
           className={`
-            ${message.kind === "quiz_widget" ? "" : "px-4 py-3 rounded-2xl text-sm leading-relaxed"}
+            ${message.kind === "quiz_widget" || message.kind === "chat_widget" ? "" : "px-4 py-3 rounded-2xl text-sm leading-relaxed"}
             ${
               isUser
                 ? "bg-primary-600 text-white rounded-br-md"
-                : message.kind === "quiz_widget"
+                : message.kind === "quiz_widget" || message.kind === "chat_widget"
                 ? "text-gray-800"
                 : "bg-white border border-gray-100 text-gray-800 rounded-bl-md shadow-sm"
             }
@@ -51,6 +52,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
               onAnswer={answerQuizWidget}
               onSubmit={submitQuizWidget}
             />
+          ) : message.kind === "chat_widget" && message.chatWidget ? (
+            <ChatWidgetCard widget={message.chatWidget} />
           ) : (
             <p className="whitespace-pre-wrap">{message.content}</p>
           )}

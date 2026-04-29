@@ -63,7 +63,7 @@ def _error_question(index: int, item: dict[str, Any], source_text: str) -> dict[
 
     return _question(
         question_id=f"q-error-{index}",
-        prompt="Chọn cách diễn đạt tự nhiên hơn từ nội dung vừa luyện.",
+        prompt=f"Chọn cách diễn đạt tự nhiên hơn cho phần: “{original}”.",
         focus=focus,
         choices=[
             _choice("correct", correction),
@@ -170,7 +170,7 @@ def build_inline_exercise_set(state: EnglishTutorState) -> dict | None:
     unique_questions: list[dict[str, Any]] = []
     seen_prompts: set[str] = set()
     for question in questions:
-        key = question["prompt"].lower()
+        key = f"{question['prompt'].lower()}::{question.get('correct_choice_id', '')}"
         if key in seen_prompts:
             continue
         seen_prompts.add(key)
