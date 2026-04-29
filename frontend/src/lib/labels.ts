@@ -29,6 +29,7 @@ const sourceLabels: Record<string, string> = {
   manual: "Tự tạo",
   imported: "Import file",
   open_source: "Nguồn mở",
+  book: "Từ sách/PDF",
 };
 
 const roleLabels: Record<string, string> = {

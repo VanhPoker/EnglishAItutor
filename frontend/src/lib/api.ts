@@ -388,12 +388,19 @@ export interface QuizSourceImportResponse extends QuizImportResponse {
   attribution: string;
 }
 
+export interface QuizBookImportResponse extends QuizImportResponse {
+  source_title: string;
+  page_range: string;
+  license: string;
+  attribution: string;
+}
+
 export interface QuizSetInfo {
   id: string;
   title: string;
   description?: string | null;
   source: string;
-  source_preset?: QuizSourcePreset | null;
+  source_preset?: QuizSourcePreset | string | null;
   source_title?: string | null;
   source_url?: string | null;
   license?: string | null;
@@ -539,6 +546,34 @@ export async function importQuizzesFromSource(
   return apiFetch<QuizSourceImportResponse>(`${API_BASE}/quizzes/source-import`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function importQuizzesFromBook(data: {
+  file: File;
+  topic: string;
+  level: string;
+  quiz_count: number;
+  questions_per_quiz: number;
+  focus?: string;
+  start_page: number;
+  max_pages: number;
+  book_title?: string;
+}): Promise<QuizBookImportResponse> {
+  const formData = new FormData();
+  formData.append("file", data.file);
+  formData.append("topic", data.topic);
+  formData.append("level", data.level);
+  formData.append("quiz_count", String(data.quiz_count));
+  formData.append("questions_per_quiz", String(data.questions_per_quiz));
+  formData.append("start_page", String(data.start_page));
+  formData.append("max_pages", String(data.max_pages));
+  if (data.focus?.trim()) formData.append("focus", data.focus.trim());
+  if (data.book_title?.trim()) formData.append("book_title", data.book_title.trim());
+
+  return apiFetch<QuizBookImportResponse>(`${API_BASE}/quizzes/book-import`, {
+    method: "POST",
+    body: formData,
   });
 }
 

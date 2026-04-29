@@ -25,6 +25,7 @@ import {
   getAdminQuiz,
   getQuizzes,
   importQuizzes,
+  importQuizzesFromBook,
   importQuizzesFromSource,
   syncCuratedQuizLibrary,
   updateQuiz,
@@ -87,7 +88,7 @@ const SOURCE_PRESETS: Array<{
 ];
 
 type ManualQuestion = QuizCreateRequest["questions"][number];
-type Mode = "generate" | "manual" | "import" | "source";
+type Mode = "generate" | "manual" | "import" | "source" | "book";
 
 function emptyManualQuestion(index: number): ManualQuestion {
   return {
@@ -303,6 +304,7 @@ export default function QuizStudio() {
   const [sourceImporting, setSourceImporting] = useState(false);
   const [sourceSetGenerating, setSourceSetGenerating] = useState(false);
   const [curatedSyncing, setCuratedSyncing] = useState(false);
+  const [bookImporting, setBookImporting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [loadingEditId, setLoadingEditId] = useState<string | null>(null);
@@ -328,6 +330,13 @@ export default function QuizStudio() {
   const [sourceQuizCount, setSourceQuizCount] = useState(3);
   const [sourceFocus, setSourceFocus] = useState("");
   const [sourceMessage, setSourceMessage] = useState("");
+  const [bookFile, setBookFile] = useState<File | null>(null);
+  const [bookTitle, setBookTitle] = useState("");
+  const [bookQuizCount, setBookQuizCount] = useState(3);
+  const [bookStartPage, setBookStartPage] = useState(1);
+  const [bookMaxPages, setBookMaxPages] = useState(25);
+  const [bookFocus, setBookFocus] = useState("");
+  const [bookMessage, setBookMessage] = useState("");
 
   const selectedSourcePreset = useMemo(
     () => SOURCE_PRESETS.find((item) => item.value === sourcePreset) || SOURCE_PRESETS[0],
@@ -583,6 +592,39 @@ export default function QuizStudio() {
     }
   };
 
+  const handleBookImport = async () => {
+    if (!bookFile) {
+      setError("Hãy chọn file PDF của sách trước khi tạo quiz.");
+      return;
+    }
+
+    setBookImporting(true);
+    setError("");
+    setActionMessage("");
+    setBookMessage("");
+    try {
+      const response = await importQuizzesFromBook({
+        file: bookFile,
+        topic,
+        level,
+        quiz_count: bookQuizCount,
+        questions_per_quiz: questionCount,
+        focus: bookFocus.trim() || undefined,
+        start_page: bookStartPage,
+        max_pages: bookMaxPages,
+        book_title: bookTitle.trim() || undefined,
+      });
+      await loadQuizzes();
+      setBookMessage(
+        `Đã tạo ${response.imported_count} quiz với ${response.question_count} câu từ ${response.source_title}, ${response.page_range}.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được quiz từ PDF sách");
+    } finally {
+      setBookImporting(false);
+    }
+  };
+
   const handleDeleteQuiz = async (quiz: QuizListItem) => {
     if (!window.confirm(`Xoá quiz "${quiz.title}" khỏi kho đề?`)) return;
 
@@ -793,10 +835,11 @@ export default function QuizStudio() {
                 </div>
               </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 md:grid-cols-4">
+              <div className="mt-5 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 md:grid-cols-5">
                 {[
                   { value: "generate", label: "Tạo bằng AI" },
                   { value: "source", label: "Nguồn mở" },
+                  { value: "book", label: "Sách/PDF" },
                   { value: "manual", label: "Tự tạo" },
                   { value: "import", label: "Import file" },
                 ].map((item) => (
@@ -984,6 +1027,115 @@ export default function QuizStudio() {
                   >
                     {curatedSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                     Thay bằng bộ dữ liệu curated
+                  </button>
+                </div>
+              ) : mode === "book" ? (
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+                    Upload PDF sách, chọn vùng trang cần đọc, hệ thống sẽ tạo câu hỏi mới theo chủ điểm trong sách.
+                    Không copy nguyên văn bài tập hay đáp án từ sách vào kho đề.
+                  </div>
+
+                  <label className="block">
+                    <span className="field-label">File PDF sách</span>
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      onChange={(event) => setBookFile(event.target.files?.[0] || null)}
+                      className="field"
+                    />
+                    {bookFile && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {bookFile.name} · {(bookFile.size / 1024 / 1024).toFixed(1)}MB
+                      </p>
+                    )}
+                  </label>
+
+                  <label className="block">
+                    <span className="field-label">Tên nguồn hiển thị</span>
+                    <input
+                      value={bookTitle}
+                      onChange={(event) => setBookTitle(event.target.value)}
+                      placeholder={bookFile ? bookFile.name.replace(/\.pdf$/i, "") : "Cambridge Grammar for IELTS"}
+                      className="field"
+                    />
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label>
+                      <span className="field-label">Từ trang</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={bookStartPage}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          setBookStartPage(Math.max(1, Number.isFinite(next) ? next : 1));
+                        }}
+                        className="field"
+                      />
+                    </label>
+                    <label>
+                      <span className="field-label">Số trang đọc</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={bookMaxPages}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          setBookMaxPages(Math.min(60, Math.max(1, Number.isFinite(next) ? next : 25)));
+                        }}
+                        className="field"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label>
+                      <span className="field-label">Số bộ quiz</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={bookQuizCount}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          setBookQuizCount(Math.min(8, Math.max(1, Number.isFinite(next) ? next : 3)));
+                        }}
+                        className="field"
+                      />
+                    </label>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs font-semibold uppercase text-gray-500">Tổng câu</p>
+                      <p className="mt-1 text-xl font-bold text-gray-900">{bookQuizCount * questionCount}</p>
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="field-label">Trọng tâm</span>
+                    <textarea
+                      value={bookFocus}
+                      onChange={(event) => setBookFocus(event.target.value)}
+                      placeholder="Ví dụ: thì hiện tại hoàn thành, mạo từ, mệnh đề quan hệ, IELTS Writing grammar..."
+                      className="field min-h-24 resize-none"
+                    />
+                  </label>
+
+                  {bookMessage && (
+                    <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                      {bookMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={bookImporting || !bookFile}
+                    onClick={handleBookImport}
+                    className="btn-primary inline-flex w-full items-center justify-center gap-2"
+                  >
+                    {bookImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
+                    Tạo quiz từ sách/PDF
                   </button>
                 </div>
               ) : mode === "manual" ? (

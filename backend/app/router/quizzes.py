@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from io import BytesIO
 from html.parser import HTMLParser
 from ipaddress import ip_address
 from collections import Counter
@@ -13,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
@@ -31,7 +32,7 @@ from app.utils.curated_quiz_sets import CURATED_OPEN_QUIZ_SETS
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
-QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source"]
+QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source", "book"]
 QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
 CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 MAX_LEARNER_LEVEL_DISTANCE = 2
@@ -43,6 +44,9 @@ ALLOWED_IMAGE_TYPES = {
 }
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_TEXT_CHARS = 7000
+MAX_BOOK_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_BOOK_TEXT_CHARS = 9000
+MAX_BOOK_IMPORT_PAGES = 60
 QUIZ_IMAGE_DIR = Path(__file__).resolve().parents[1] / "uploads" / "quiz-images"
 QUIZ_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -250,6 +254,13 @@ class QuizImportResponse(BaseModel):
 class QuizSourceImportResponse(QuizImportResponse):
     source_title: str
     source_url: Optional[str] = None
+    license: str
+    attribution: str
+
+
+class QuizBookImportResponse(QuizImportResponse):
+    source_title: str
+    page_range: str
     license: str
     attribution: str
 
@@ -982,6 +993,77 @@ async def _fetch_source_text(url: str | None) -> str:
         return ""
 
 
+def _clean_book_title(file_name: str) -> str:
+    stem = Path(file_name or "Uploaded English book").stem
+    cleaned = re.sub(r"[_-]+", " ", stem).strip()
+    return cleaned or "Uploaded English book"
+
+
+async def _read_limited_upload(file: UploadFile, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="File PDF quá lớn. Giới hạn hiện tại là 100MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _extract_pdf_book_text(
+    data: bytes,
+    *,
+    start_page: int,
+    max_pages: int,
+) -> tuple[str, int, int, int]:
+    try:
+        from pypdf import PdfReader
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Backend chưa cài thư viện đọc PDF.") from exc
+
+    try:
+        reader = PdfReader(BytesIO(data))
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Không đọc được PDF này. File có thể bị mã hoá hoặc lỗi.") from exc
+
+    page_count = len(reader.pages)
+    if page_count <= 0:
+        raise HTTPException(status_code=422, detail="PDF không có trang hợp lệ.")
+
+    start = max(1, start_page)
+    if start > page_count:
+        raise HTTPException(status_code=422, detail=f"PDF chỉ có {page_count} trang, không có trang {start}.")
+
+    page_limit = max(1, min(max_pages, MAX_BOOK_IMPORT_PAGES))
+    end = min(page_count, start + page_limit - 1)
+    chunks: list[str] = []
+    remaining = MAX_BOOK_TEXT_CHARS
+
+    for page_number in range(start, end + 1):
+        try:
+            text = reader.pages[page_number - 1].extract_text() or ""
+        except Exception:
+            text = ""
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        chunks.append(text[:remaining])
+        remaining -= len(chunks[-1])
+        if remaining <= 0:
+            break
+
+    extracted = "\n".join(chunks).strip()
+    if len(extracted) < 500:
+        raise HTTPException(
+            status_code=422,
+            detail="Không trích xuất đủ chữ từ vùng trang đã chọn. Hãy thử vùng trang khác hoặc PDF có text layer.",
+        )
+    return extracted, start, end, page_count
+
+
 def _source_info(req: QuizSourceImportRequest) -> dict:
     if req.preset == "custom_url":
         if not req.source_url:
@@ -1220,6 +1302,106 @@ Return structured data only.
                 f"Hệ thống không thể tạo quiz từ nguồn {info['title']} lúc này. "
                 "Không còn fallback mock nữa; hãy thử lại hoặc dùng import file."
             ),
+        ) from exc
+
+
+async def _generate_book_quizzes(
+    *,
+    book_title: str,
+    page_range: str,
+    book_text: str,
+    topic: str,
+    level: str,
+    quiz_count: int,
+    questions_per_quiz: int,
+    focus: str | None,
+) -> list[QuizImportItem]:
+    topic_display = topic.replace("_", " ")
+    prompt = f"""
+Create a batch of original English learner quizzes from a user-uploaded grammar/IELTS book excerpt.
+
+Source book: {book_title}
+Pages used: {page_range}
+
+Target:
+- CEFR level: {level}
+- Topic: {topic_display}
+- Focus: {focus or 'grammar accuracy, IELTS-style language use, vocabulary, and sentence structure'}
+- Quiz count: {quiz_count}
+- Questions per quiz: {questions_per_quiz}
+
+Rules:
+- Generate original questions inspired by the grammar points and skills in the excerpt.
+- Do not copy long passages, examples, answer keys, or exercises from the book.
+- Keep any quoted phrase extremely short when needed.
+- Every quiz must contain exactly {questions_per_quiz} questions.
+- Use only multiple_choice and fill_blank.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- Explanations must be in Vietnamese and tell the learner what grammar point to notice.
+- Questions should be useful for Vietnamese learners preparing for IELTS or school English.
+- Do not return generic placeholder questions.
+
+Book excerpt:
+{book_text}
+
+Return structured data only.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.22).with_structured_output(GeneratedQuizBatch)
+        batch: GeneratedQuizBatch = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You create copyright-safe, original English quizzes from limited book excerpts. "
+                        "You never reproduce full copyrighted exercises."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        quizzes: list[QuizImportItem] = []
+        for quiz_index, generated in enumerate(batch.quizzes[:quiz_count], start=1):
+            questions: list[QuizQuestion] = []
+            for question_index, question in enumerate(generated.questions[:questions_per_quiz], start=1):
+                data = question.model_dump()
+                data["id"] = data.get("id") or f"q{question_index}"
+                if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                    data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+                questions.append(QuizQuestion.model_validate(data))
+
+            questions = _normalize_questions(questions)
+            if len(questions) >= questions_per_quiz:
+                quizzes.append(
+                    QuizImportItem(
+                        title=generated.title or f"{book_title} - {level} #{quiz_index}",
+                        topic=topic,
+                        level=level,
+                        description=(
+                            f"{generated.description}\n"
+                            f"Dựa trên chủ điểm từ sách {book_title}, {page_range}. "
+                            "Câu hỏi được AI tạo mới, không sao chép nguyên văn bài tập trong sách."
+                        ),
+                        questions=questions[:questions_per_quiz],
+                    )
+                )
+
+        if len(quizzes) >= quiz_count:
+            return quizzes[:quiz_count]
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Đã đọc PDF nhưng chỉ tạo được {len(quizzes)}/{quiz_count} quiz hợp lệ. "
+                "Hãy giảm số bộ, giảm số câu hoặc chọn vùng trang rõ chữ hơn."
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(f"Book quiz generation failed: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail="AI chưa tạo được quiz hợp lệ từ sách này. Hãy thử vùng trang khác hoặc giảm số bộ cần tạo.",
         ) from exc
 
 
@@ -1887,6 +2069,116 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
         source_url=info.get("url"),
         license=info["license"],
         attribution=info["attribution"],
+    )
+
+
+@router.post("/book-import", response_model=QuizBookImportResponse)
+async def import_quizzes_from_book(
+    file: UploadFile = File(...),
+    topic: str = Form("free_conversation"),
+    level: str = Form("B1"),
+    quiz_count: int = Form(3, ge=1, le=8),
+    questions_per_quiz: int = Form(5, ge=3, le=10),
+    focus: Optional[str] = Form(None),
+    start_page: int = Form(1, ge=1),
+    max_pages: int = Form(25, ge=1, le=MAX_BOOK_IMPORT_PAGES),
+    book_title: Optional[str] = Form(None),
+    user: User = Depends(require_role("admin")),
+):
+    file_name = file.filename or "uploaded.pdf"
+    if not file_name.lower().endswith(".pdf") and file.content_type != "application/pdf":
+        raise HTTPException(status_code=422, detail="Hiện tại chỉ hỗ trợ import sách dạng PDF.")
+
+    normalized_level = level.strip().upper()
+    if normalized_level not in CEFR_LEVELS:
+        raise HTTPException(status_code=422, detail="Trình độ phải thuộc A1, A2, B1, B2, C1 hoặc C2.")
+
+    source_title = (book_title or "").strip() or _clean_book_title(file_name)
+    data = await _read_limited_upload(file, MAX_BOOK_UPLOAD_BYTES)
+    book_text, page_start, page_end, page_count = _extract_pdf_book_text(
+        data,
+        start_page=start_page,
+        max_pages=max_pages,
+    )
+    page_range = f"trang {page_start}-{page_end}/{page_count}"
+    generated_items = await _generate_book_quizzes(
+        book_title=source_title,
+        page_range=page_range,
+        book_text=book_text,
+        topic=topic,
+        level=normalized_level,
+        quiz_count=quiz_count,
+        questions_per_quiz=questions_per_quiz,
+        focus=focus,
+    )
+
+    license_note = "User-uploaded book excerpt; verify reuse rights before public publishing."
+    attribution = source_title
+    source_note = (
+        f"Nguồn: {attribution}. Vùng đọc: {page_range}. "
+        "Câu hỏi do AI tạo mới, không sao chép nguyên văn bài tập trong sách."
+    )
+    imported: list[Quiz] = []
+    total_questions = 0
+    for item in generated_items[:quiz_count]:
+        questions = _normalize_questions(item.questions)[:questions_per_quiz]
+        if len(questions) < 3:
+            continue
+        total_questions += len(questions)
+        description = (item.description or "").strip()
+        if source_note not in description:
+            description = f"{description}\n{source_note}".strip()
+        imported.append(
+            Quiz(
+                user_id=user.id,
+                title=item.title.strip() or f"{source_title} - {normalized_level}",
+                topic=item.topic or topic,
+                level=item.level or normalized_level,
+                source="book",
+                description=description,
+                questions_json=[question.model_dump() for question in questions],
+            )
+        )
+
+    if not imported:
+        raise HTTPException(status_code=422, detail="Không tạo được quiz hợp lệ từ PDF này.")
+
+    factory = get_session_factory()
+    async with factory() as db:
+        quiz_set = QuizSet(
+            created_by=user.id,
+            title=f"{source_title} - {normalized_level}",
+            description=(
+                f"Bộ quiz tạo từ {source_title}, {page_range}. "
+                "Nội dung câu hỏi được tạo mới theo chủ điểm trong sách."
+            ),
+            source="book",
+            source_preset="book_pdf",
+            source_title=source_title,
+            source_url=None,
+            license=license_note,
+            attribution=attribution,
+            topic=topic,
+            level=normalized_level,
+        )
+        db.add(quiz_set)
+        for quiz in imported:
+            quiz.quiz_set = quiz_set
+            db.add(quiz)
+        await db.commit()
+        await db.refresh(quiz_set)
+        for quiz in imported:
+            await db.refresh(quiz)
+
+    items = [_quiz_list_item(quiz, user) for quiz in imported]
+    return QuizBookImportResponse(
+        imported_count=len(items),
+        question_count=total_questions,
+        quizzes=items,
+        source_title=source_title,
+        page_range=page_range,
+        license=license_note,
+        attribution=attribution,
     )
 
 
