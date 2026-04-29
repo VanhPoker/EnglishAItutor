@@ -32,10 +32,12 @@ from app.utils.curated_quiz_sets import CURATED_OPEN_QUIZ_SETS
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
 QuestionType = Literal["multiple_choice", "fill_blank"]
-QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source", "book"]
+QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source", "book", "level_test"]
 QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
 CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 MAX_LEARNER_LEVEL_DISTANCE = 2
+LEVEL_UPGRADE_PASS_SCORE = 80
+LEVEL_UPGRADE_QUESTION_COUNT = 12
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -320,6 +322,34 @@ class LearnerQuizProfile(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
 
 
+class LevelUpgradeStatusResponse(BaseModel):
+    current_level: str
+    target_level: Optional[str] = None
+    available: bool
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    question_count: int = LEVEL_UPGRADE_QUESTION_COUNT
+    message: str
+
+
+class LevelUpgradeOutcome(BaseModel):
+    is_level_test: bool = True
+    passed: bool
+    upgraded: bool
+    previous_level: str
+    target_level: str
+    current_level: str
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    score: int
+    message: str
+
+
+class LevelUpgradeStartResponse(BaseModel):
+    quiz: QuizResponse
+    current_level: str
+    target_level: str
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+
+
 class GeneratedQuizQuestion(BaseModel):
     id: Optional[str] = None
     type: QuestionType = "multiple_choice"
@@ -340,6 +370,7 @@ class QuizAttemptResponse(BaseModel):
     results: list[QuestionResult]
     ai_review: QuizReview
     learner_profile: LearnerQuizProfile
+    level_upgrade: Optional[LevelUpgradeOutcome] = None
     created_at: datetime
 
 
@@ -364,6 +395,13 @@ def _level_index(level: str | None) -> int:
 
 def _level_distance(left: str | None, right: str | None) -> int:
     return abs(_level_index(left) - _level_index(right))
+
+
+def _next_level(level: str | None) -> str | None:
+    index = _level_index(level)
+    if index >= len(CEFR_LEVELS) - 1:
+        return None
+    return CEFR_LEVELS[index + 1]
 
 
 def _is_level_allowed(user: User, quiz_level: str | None) -> bool:
@@ -1457,6 +1495,223 @@ Return structured data only.
     )
 
 
+def _fallback_level_upgrade_questions(current_level: str, target_level: str, count: int) -> list[QuizQuestion]:
+    templates = [
+        QuizQuestion(
+            id="q1",
+            type="multiple_choice",
+            prompt=f"Choose the best sentence for a learner ready to move from {current_level} to {target_level}.",
+            options=[
+                "I have been learning English for three years.",
+                "I am learning English since three years.",
+                "I learn English since three years.",
+                "I have learning English for three years.",
+            ],
+            correct_answer="I have been learning English for three years.",
+            explanation="Dùng hiện tại hoàn thành tiếp diễn với 'for' để nói một việc bắt đầu trong quá khứ và vẫn tiếp diễn.",
+            focus="grammar",
+        ),
+        QuizQuestion(
+            id="q2",
+            type="multiple_choice",
+            prompt="Which sentence is the most natural in a polite conversation?",
+            options=[
+                "Would you mind explaining the point again?",
+                "Do you mind to explain the point again?",
+                "Would you mind explain the point again?",
+                "You mind explaining the point again?",
+            ],
+            correct_answer="Would you mind explaining the point again?",
+            explanation="Sau 'Would you mind' dùng V-ing: 'explaining'.",
+            focus="conversation",
+        ),
+        QuizQuestion(
+            id="q3",
+            type="fill_blank",
+            prompt="Complete the sentence: The course was challenging, _____ it helped me speak more confidently.",
+            options=[],
+            correct_answer="but",
+            explanation="'But' nối hai ý tương phản: khó nhưng hữu ích.",
+            focus="structure",
+        ),
+        QuizQuestion(
+            id="q4",
+            type="multiple_choice",
+            prompt="Choose the sentence with the clearest word order.",
+            options=[
+                "I usually review new vocabulary before I go to bed.",
+                "Usually I review before I go to bed new vocabulary.",
+                "I review usually new vocabulary before go to bed.",
+                "Before I go to bed usually review new vocabulary.",
+            ],
+            correct_answer="I usually review new vocabulary before I go to bed.",
+            explanation="Trạng từ tần suất thường đứng trước động từ chính: 'usually review'.",
+            focus="structure",
+        ),
+        QuizQuestion(
+            id="q5",
+            type="multiple_choice",
+            prompt="Read: Linh missed the first bus, so she took a taxi and arrived five minutes early. What is true?",
+            options=[
+                "She still arrived before the expected time.",
+                "She was late because she missed the bus.",
+                "She decided not to go.",
+                "She arrived exactly on time by bus.",
+            ],
+            correct_answer="She still arrived before the expected time.",
+            explanation="'Arrived five minutes early' nghĩa là đến sớm 5 phút.",
+            focus="comprehension",
+        ),
+        QuizQuestion(
+            id="q6",
+            type="multiple_choice",
+            prompt="Choose the best word: The teacher gave us useful _____ on how to improve pronunciation.",
+            options=["feedback", "advices", "informations", "knowledges"],
+            correct_answer="feedback",
+            explanation="'Feedback' là danh từ không đếm được dùng tự nhiên trong ngữ cảnh nhận xét.",
+            focus="vocabulary",
+        ),
+        QuizQuestion(
+            id="q7",
+            type="fill_blank",
+            prompt="Complete the sentence: I am looking forward _____ joining the speaking club.",
+            options=[],
+            correct_answer="to",
+            explanation="Cụm cố định là 'look forward to + V-ing'.",
+            focus="grammar",
+        ),
+        QuizQuestion(
+            id="q8",
+            type="multiple_choice",
+            prompt="Which sentence gives an opinion with a clear reason?",
+            options=[
+                "I prefer online lessons because I can review the recording later.",
+                "I prefer online lessons because convenient and recording.",
+                "Online lessons I prefer because can review later.",
+                "I prefer online lessons, so I can review because later.",
+            ],
+            correct_answer="I prefer online lessons because I can review the recording later.",
+            explanation="Câu đúng có chủ ngữ và động từ đầy đủ sau 'because'.",
+            focus="speaking",
+        ),
+        QuizQuestion(
+            id="q9",
+            type="multiple_choice",
+            prompt="Read: The notice says, 'Please submit your application by Friday noon.' What should applicants do?",
+            options=[
+                "Send the application before or by Friday noon.",
+                "Start writing the application after Friday noon.",
+                "Submit the application on Saturday morning.",
+                "Wait for another notice before submitting.",
+            ],
+            correct_answer="Send the application before or by Friday noon.",
+            explanation="'By Friday noon' nghĩa là hạn chót là trưa thứ Sáu.",
+            focus="comprehension",
+        ),
+        QuizQuestion(
+            id="q10",
+            type="multiple_choice",
+            prompt="Choose the best connector: I wanted to join the class; _____, I had to work late.",
+            options=["however", "because", "so", "for example"],
+            correct_answer="however",
+            explanation="'However' nối hai ý đối lập trong văn viết hoặc nói trang trọng hơn.",
+            focus="structure",
+        ),
+        QuizQuestion(
+            id="q11",
+            type="fill_blank",
+            prompt="Complete the sentence: This exercise is similar _____ the one we did yesterday.",
+            options=[],
+            correct_answer="to",
+            explanation="Cụm đúng là 'similar to'.",
+            focus="vocabulary",
+        ),
+        QuizQuestion(
+            id="q12",
+            type="multiple_choice",
+            prompt="Choose the most precise sentence.",
+            options=[
+                "If I had more time, I would practise speaking every day.",
+                "If I have more time, I would practise speaking every day.",
+                "If I had more time, I will practise speaking every day.",
+                "If I would have more time, I practised speaking every day.",
+            ],
+            correct_answer="If I had more time, I would practise speaking every day.",
+            explanation="Câu điều kiện loại 2 dùng 'If + past simple, would + V'.",
+            focus="grammar",
+        ),
+    ]
+    return templates[:count]
+
+
+async def _generate_level_upgrade_quiz(current_level: str, target_level: str) -> GeneratedQuiz:
+    prompt = f"""
+Create an internal CEFR level-up assessment for an English learning app.
+
+Learner context:
+- Current level: {current_level}
+- Target level to unlock: {target_level}
+- This is an internal learning assessment, not an official certificate.
+
+Question design:
+- Exactly {LEVEL_UPGRADE_QUESTION_COUNT} questions.
+- Assess target-level readiness across grammar/language use, vocabulary, reading comprehension, sentence structure, and practical conversation.
+- Include short original reading contexts inside some prompts, so no external audio or image is needed.
+- Use only multiple_choice and fill_blank.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- Use focus labels like grammar, vocabulary, word_choice, structure, comprehension, conversation, speaking.
+- Explanations must be in Vietnamese and tell the learner what rule or skill the question checks.
+- Distractors should reflect common Vietnamese learner mistakes.
+- Do not copy official exam questions or book exercises.
+- Do not produce generic placeholder questions.
+
+Return structured data only.
+"""
+    title = f"Thi nâng cấp {current_level} lên {target_level}"
+    description = (
+        f"Bài kiểm tra nội bộ theo CEFR để xem bạn đã sẵn sàng chuyển từ {current_level} lên {target_level} chưa. "
+        f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% để nâng cấp trong hệ thống."
+    )
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.18).with_structured_output(GeneratedQuiz)
+        generated: GeneratedQuiz = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You design CEFR-aligned internal diagnostic questions for English learners. "
+                        "You create original assessment items and never copy official exams."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        questions = []
+        for index, question in enumerate(generated.questions[:LEVEL_UPGRADE_QUESTION_COUNT], start=1):
+            data = question.model_dump()
+            data["id"] = data.get("id") or f"q{index}"
+            if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+            questions.append(QuizQuestion.model_validate(data))
+        questions = _normalize_questions(questions)
+        if len(questions) >= LEVEL_UPGRADE_QUESTION_COUNT:
+            return GeneratedQuiz(
+                title=generated.title or title,
+                description=generated.description or description,
+                questions=_generated_questions_from_quiz_questions(questions[:LEVEL_UPGRADE_QUESTION_COUNT]),
+            )
+        raise ValueError(f"Only generated {len(questions)} valid questions")
+    except Exception as exc:
+        logger.warning(f"Level-up quiz generation failed, using deterministic fallback: {exc}")
+        return GeneratedQuiz(
+            title=title,
+            description=description,
+            questions=_generated_questions_from_quiz_questions(
+                _fallback_level_upgrade_questions(current_level, target_level, LEVEL_UPGRADE_QUESTION_COUNT)
+            ),
+        )
+
+
 async def _generate_personalized_remedial_quiz(
     db,
     user: User,
@@ -1773,6 +2028,47 @@ def _fallback_review(score: int, results: list[QuestionResult]) -> QuizReview:
     )
 
 
+async def _level_upgrade_outcome(db, user: User, quiz: Quiz, score: int) -> LevelUpgradeOutcome | None:
+    if quiz.source != "level_test":
+        return None
+
+    db_user = await db.get(User, user.id)
+    previous_level = ((db_user.cefr_level if db_user else user.cefr_level) or "B1").upper()
+    target_level = (quiz.level or "").strip().upper()
+    if target_level not in CEFR_LEVELS:
+        return None
+
+    passed = score >= LEVEL_UPGRADE_PASS_SCORE
+    upgraded = False
+    current_level = previous_level
+    if passed and db_user and _level_index(target_level) > _level_index(previous_level):
+        db_user.cefr_level = target_level
+        db.add(db_user)
+        upgraded = True
+        current_level = target_level
+
+    if upgraded:
+        message = f"Đạt {score}%. Bạn đã được nâng từ {previous_level} lên {target_level} trong hệ thống."
+    elif passed:
+        message = f"Đạt {score}%. Bạn đã đủ điều kiện cho {target_level}, nhưng level hiện tại không cần cập nhật thêm."
+    else:
+        message = (
+            f"Đạt {score}%. Chưa đủ ngưỡng {LEVEL_UPGRADE_PASS_SCORE}% để nâng lên {target_level}. "
+            "Hãy xem lại nhóm câu sai rồi thử lại sau."
+        )
+
+    return LevelUpgradeOutcome(
+        passed=passed,
+        upgraded=upgraded,
+        previous_level=previous_level,
+        target_level=target_level,
+        current_level=current_level,
+        pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+        score=score,
+        message=message,
+    )
+
+
 async def _build_ai_review(
     quiz: Quiz,
     score: int,
@@ -1897,6 +2193,58 @@ async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(get_curre
         await db.commit()
         await db.refresh(quiz)
         return _quiz_response(quiz)
+
+
+@router.get("/level-upgrade/status", response_model=LevelUpgradeStatusResponse)
+async def get_level_upgrade_status(user: User = Depends(require_role("learner"))):
+    current_level = (user.cefr_level or "B1").upper()
+    target_level = _next_level(current_level)
+    if not target_level:
+        return LevelUpgradeStatusResponse(
+            current_level=current_level,
+            target_level=None,
+            available=False,
+            message="Bạn đang ở C2, hiện không còn cấp CEFR cao hơn để nâng trong hệ thống.",
+        )
+    return LevelUpgradeStatusResponse(
+        current_level=current_level,
+        target_level=target_level,
+        available=True,
+        message=(
+            f"Làm bài kiểm tra nội bộ từ {current_level} lên {target_level}. "
+            f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% để nâng cấp."
+        ),
+    )
+
+
+@router.post("/level-upgrade/start", response_model=LevelUpgradeStartResponse)
+async def start_level_upgrade_exam(user: User = Depends(require_role("learner"))):
+    current_level = (user.cefr_level or "B1").upper()
+    target_level = _next_level(current_level)
+    if not target_level:
+        raise HTTPException(status_code=422, detail="Bạn đang ở C2, hiện không còn cấp cao hơn để nâng.")
+
+    generated = await _generate_level_upgrade_quiz(current_level=current_level, target_level=target_level)
+    factory = get_session_factory()
+    async with factory() as db:
+        quiz = Quiz(
+            user_id=user.id,
+            title=generated.title,
+            topic="level_upgrade",
+            level=target_level,
+            source="level_test",
+            description=generated.description,
+            questions_json=[item.model_dump() for item in generated.questions],
+        )
+        db.add(quiz)
+        await db.commit()
+        await db.refresh(quiz)
+        return LevelUpgradeStartResponse(
+            quiz=_quiz_response(quiz),
+            current_level=current_level,
+            target_level=target_level,
+            pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+        )
 
 
 def _allowed_levels_for_user(user: User) -> list[str]:
@@ -2443,13 +2791,17 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             },
         )
         review = await _build_ai_review(quiz, score, question_results, learner_profile)
+        level_upgrade = await _level_upgrade_outcome(db, user, quiz, score)
+        review_payload = review.model_dump()
+        if level_upgrade:
+            review_payload["_level_upgrade"] = level_upgrade.model_dump()
 
         attempt = QuizAttempt(
             quiz_id=quiz.id,
             user_id=user.id,
             answers_json=req.answers,
             result_json=[item.model_dump() for item in question_results],
-            ai_review_json=review.model_dump(),
+            ai_review_json=review_payload,
             score=score,
             correct_count=correct_count,
             total_questions=len(questions),
@@ -2468,6 +2820,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             results=question_results,
             ai_review=review,
             learner_profile=learner_profile,
+            level_upgrade=level_upgrade,
             created_at=attempt.created_at,
         )
 
@@ -2486,6 +2839,11 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(require_role("l
             raise HTTPException(status_code=404, detail="Quiz attempt not found")
         attempt, quiz = row
         learner_profile = await _build_learner_profile(db, user.id)
+        raw_review = attempt.ai_review_json or {}
+        level_upgrade = None
+        if isinstance(raw_review, dict) and raw_review.get("_level_upgrade"):
+            level_upgrade = LevelUpgradeOutcome.model_validate(raw_review["_level_upgrade"])
+        review_payload = {key: value for key, value in raw_review.items() if key != "_level_upgrade"}
         return QuizAttemptResponse(
             id=attempt.id,
             quiz_id=quiz.id,
@@ -2494,7 +2852,8 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(require_role("l
             correct_count=attempt.correct_count,
             total_questions=attempt.total_questions,
             results=[QuestionResult.model_validate(item) for item in attempt.result_json or []],
-            ai_review=QuizReview.model_validate(attempt.ai_review_json or {}),
+            ai_review=QuizReview.model_validate(review_payload),
             learner_profile=learner_profile,
+            level_upgrade=level_upgrade,
             created_at=attempt.created_at,
         )

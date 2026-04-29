@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, ClipboardList, Loader2, RefreshCw, Sparkles, Target } from "lucide-react";
+import { ArrowRight, ClipboardList, GraduationCap, Loader2, RefreshCw, Sparkles, Target } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { generateQuiz, getQuizSets, getQuizzes, type QuizListItem, type QuizSetInfo } from "../lib/api";
+import {
+  generateQuiz,
+  getLevelUpgradeStatus,
+  getQuizSets,
+  getQuizzes,
+  startLevelUpgradeExam,
+  type LevelUpgradeStatus,
+  type QuizListItem,
+  type QuizSetInfo,
+} from "../lib/api";
 import { quizSourceLabel, topicLabel } from "../lib/labels";
 import { useUserStore } from "../stores/userStore";
 
@@ -25,6 +34,8 @@ export default function LearnerQuizzes() {
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [generatingRemedial, setGeneratingRemedial] = useState(false);
+  const [levelUpgradeStatus, setLevelUpgradeStatus] = useState<LevelUpgradeStatus | null>(null);
+  const [startingLevelExam, setStartingLevelExam] = useState(false);
 
   const allQuizzes = useMemo(
     () => [...quizSets.flatMap((set) => set.quizzes), ...quizzes],
@@ -43,6 +54,9 @@ export default function LearnerQuizzes() {
       const [sets, quizItems] = await Promise.all([getQuizSets(), getQuizzes()]);
       setQuizSets(sets);
       setQuizzes(quizItems.filter((quiz) => !quiz.quiz_set_id));
+      getLevelUpgradeStatus()
+        .then(setLevelUpgradeStatus)
+        .catch(() => setLevelUpgradeStatus(null));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được kho quiz");
     } finally {
@@ -71,6 +85,23 @@ export default function LearnerQuizzes() {
       setError(err instanceof Error ? err.message : "Không tạo được quiz ôn lỗi");
     } finally {
       setGeneratingRemedial(false);
+    }
+  };
+
+  const handleStartLevelUpgrade = async () => {
+    setStartingLevelExam(true);
+    setError("");
+    setActionMessage("");
+    try {
+      const result = await startLevelUpgradeExam();
+      setActionMessage(
+        `Đã tạo bài thi nâng cấp ${result.current_level} lên ${result.target_level}. Cần đạt ${result.pass_threshold}% để nâng cấp.`
+      );
+      navigate(`/quizzes/${result.quiz.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được bài thi nâng cấp");
+    } finally {
+      setStartingLevelExam(false);
     }
   };
 
@@ -147,6 +178,41 @@ export default function LearnerQuizzes() {
             >
               {generatingRemedial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               Tạo quiz ôn lỗi
+            </button>
+          </div>
+        </Card>
+
+        <Card className="mt-6 border-blue-200 bg-blue-50">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-blue-700 ring-1 ring-blue-200">
+                <GraduationCap className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-semibold text-gray-900">Thi nâng cấp trình độ</h2>
+                  <Badge variant="info">
+                    {levelUpgradeStatus?.current_level || level}
+                    {levelUpgradeStatus?.target_level ? ` → ${levelUpgradeStatus.target_level}` : ""}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-sm text-gray-600">
+                  {levelUpgradeStatus?.message ||
+                    "Làm bài kiểm tra nội bộ theo CEFR để mở cấp học kế tiếp trong hệ thống."}
+                </p>
+                <p className="mt-1 text-xs text-blue-700">
+                  Đây là bài đánh giá nội bộ, không thay thế chứng chỉ quốc tế như IELTS, Cambridge hay EF SET.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={startingLevelExam || levelUpgradeStatus?.available === false}
+              onClick={() => void handleStartLevelUpgrade()}
+              className="btn-primary inline-flex items-center justify-center gap-2"
+            >
+              {startingLevelExam ? <Loader2 className="h-4 w-4 animate-spin" /> : <GraduationCap className="h-4 w-4" />}
+              Bắt đầu thi nâng cấp
             </button>
           </div>
         </Card>

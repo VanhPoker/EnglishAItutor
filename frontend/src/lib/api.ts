@@ -483,6 +483,27 @@ export interface LearnerQuizProfile {
   recommendations: string[];
 }
 
+export interface LevelUpgradeStatus {
+  current_level: string;
+  target_level: string | null;
+  available: boolean;
+  pass_threshold: number;
+  question_count: number;
+  message: string;
+}
+
+export interface LevelUpgradeOutcome {
+  is_level_test: boolean;
+  passed: boolean;
+  upgraded: boolean;
+  previous_level: string;
+  target_level: string;
+  current_level: string;
+  pass_threshold: number;
+  score: number;
+  message: string;
+}
+
 export interface QuizAttemptResponse {
   id: string;
   quiz_id: string;
@@ -493,7 +514,15 @@ export interface QuizAttemptResponse {
   results: QuestionResult[];
   ai_review: QuizReview;
   learner_profile: LearnerQuizProfile;
+  level_upgrade?: LevelUpgradeOutcome | null;
   created_at: string;
+}
+
+export interface LevelUpgradeStartResponse {
+  quiz: QuizResponse;
+  current_level: string;
+  target_level: string;
+  pass_threshold: number;
 }
 
 export async function getQuizzes(): Promise<QuizListItem[]> {
@@ -530,6 +559,17 @@ export async function generateQuiz(data: QuizGenerateRequest): Promise<QuizRespo
   return apiFetch<QuizResponse>(`${API_BASE}/quizzes/generate`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function getLevelUpgradeStatus(): Promise<LevelUpgradeStatus> {
+  return apiFetch<LevelUpgradeStatus>(`${API_BASE}/quizzes/level-upgrade/status`);
+}
+
+export async function startLevelUpgradeExam(): Promise<LevelUpgradeStartResponse> {
+  return apiFetch<LevelUpgradeStartResponse>(`${API_BASE}/quizzes/level-upgrade/start`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

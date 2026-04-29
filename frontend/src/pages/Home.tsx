@@ -137,7 +137,7 @@ export default function Home() {
                   title: "Nói với gia sư",
                   body: `Luyện ${level} theo chủ đề ${topicLabel(topic)}.`,
                   icon: MessageSquare,
-                  action: "Bắt đầu luyện nói",
+                  action: "Gia sư AI",
                   to: "/practice",
                   tone: "bg-blue-50 text-blue-700 ring-blue-100",
                 },
@@ -246,7 +246,7 @@ export default function Home() {
                 <p className="mt-1 text-sm text-gray-500">Chọn ngữ cảnh trước khi vào phòng luyện nói.</p>
               </div>
               <Link to="/practice" className="btn-primary inline-flex items-center justify-center gap-2">
-                Bắt đầu luyện nói
+                Gia sư AI
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>

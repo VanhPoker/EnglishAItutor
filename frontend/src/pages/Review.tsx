@@ -152,7 +152,7 @@ export default function Review() {
                 <h1 className="text-lg font-semibold text-gray-900">Chưa có phiên học hoàn thành</h1>
                 <p className="text-sm text-gray-500 mt-1">{error || "Hãy hoàn thành một phiên luyện nói trước."}</p>
                 <Link to="/practice" className="btn-primary inline-flex items-center gap-2 mt-5">
-                  Bắt đầu luyện nói
+                  Gia sư AI
                   <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>

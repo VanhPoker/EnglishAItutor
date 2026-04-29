@@ -7,6 +7,7 @@ const topicLabels: Record<string, string> = {
   movies_books: "Phim và sách",
   technology: "Công nghệ",
   health_fitness: "Sức khoẻ",
+  level_upgrade: "Thi nâng cấp",
 };
 
 const focusLabels: Record<string, string> = {
@@ -30,6 +31,7 @@ const sourceLabels: Record<string, string> = {
   imported: "Import file",
   open_source: "Nguồn mở",
   book: "Từ sách/PDF",
+  level_test: "Thi nâng cấp",
 };
 
 const roleLabels: Record<string, string> = {

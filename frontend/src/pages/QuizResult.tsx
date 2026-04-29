@@ -14,8 +14,9 @@ import {
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { generateQuiz, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
+import { generateQuiz, getMe, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
 import { focusLabel } from "../lib/labels";
+import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
 function scoreTone(score: number) {
@@ -68,7 +69,8 @@ function trendTone(trend: QuizAttemptResponse["learner_profile"]["recent_trend"]
 export default function QuizResult() {
   const navigate = useNavigate();
   const { attemptId } = useParams();
-  const { topic, level } = useUserStore();
+  const { topic, level, setLevel } = useUserStore();
+  const updateAuthUser = useAuthStore((s) => s.updateUser);
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,10 +80,19 @@ export default function QuizResult() {
   useEffect(() => {
     if (!attemptId) return;
     getQuizAttempt(attemptId)
-      .then(setAttempt)
+      .then((data) => {
+        setAttempt(data);
+        if (data.level_upgrade?.upgraded) {
+          setLevel(data.level_upgrade.current_level);
+          updateAuthUser({ cefr_level: data.level_upgrade.current_level });
+          getMe()
+            .then((user) => updateAuthUser(user))
+            .catch(() => undefined);
+        }
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Không tải được kết quả"))
       .finally(() => setLoading(false));
-  }, [attemptId]);
+  }, [attemptId, setLevel, updateAuthUser]);
 
   const wrongResults = useMemo(() => {
     return attempt?.results.filter((item) => !item.is_correct) || [];
@@ -181,6 +192,49 @@ export default function QuizResult() {
           <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             {actionMessage}
           </div>
+        )}
+
+        {attempt.level_upgrade && (
+          <Card
+            className={`mb-6 ${
+              attempt.level_upgrade.passed ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg bg-white ring-1 ${
+                    attempt.level_upgrade.passed
+                      ? "text-green-700 ring-green-200"
+                      : "text-amber-700 ring-amber-200"
+                  }`}
+                >
+                  {attempt.level_upgrade.passed ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : (
+                    <Target className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-semibold text-gray-900">Kết quả thi nâng cấp</h2>
+                    <Badge variant={attempt.level_upgrade.passed ? "success" : "warning"}>
+                      {attempt.level_upgrade.previous_level} → {attempt.level_upgrade.target_level}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-gray-700">{attempt.level_upgrade.message}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Ngưỡng nâng cấp nội bộ: {attempt.level_upgrade.pass_threshold}%. Admin vẫn có thể điều chỉnh level
+                    nếu cần.
+                  </p>
+                </div>
+              </div>
+              <Link to="/quizzes" className="btn-secondary inline-flex items-center justify-center gap-2">
+                Về kho quiz
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </Card>
         )}
 
         <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
