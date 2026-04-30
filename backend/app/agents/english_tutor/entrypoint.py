@@ -90,6 +90,16 @@ EXERCISE_REQUEST_PHRASES = (
     "practice a short exercise",
     "give me a quiz",
     "give me questions",
+    "listening",
+    "practice listening",
+    "listening exercise",
+    "bai nghe",
+    "luyen nghe",
+    "speaking",
+    "practice speaking",
+    "speaking exercise",
+    "bai noi",
+    "luyen noi",
 )
 AFFIRMATIVE_PHRASES = (
     "yes",

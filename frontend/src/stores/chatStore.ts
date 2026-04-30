@@ -40,11 +40,14 @@ export interface InlineQuizQuestion {
   id: string;
   prompt: string;
   focus: string;
-  question_type: "multiple_choice";
+  question_type: "multiple_choice" | "listening_choice" | "listening_fill_blank" | "speaking_prompt";
   choices: InlineQuizChoice[];
-  correct_choice_id: string;
+  correct_choice_id?: string;
+  correct_answer?: string;
   explanation: string;
   source_text?: string;
+  audio_text?: string;
+  min_words?: number;
 }
 
 export interface InlineQuizWidget {
@@ -61,11 +64,14 @@ export interface InlineQuizWidget {
   // Legacy single-question payload support for old agent containers.
   prompt?: string;
   focus?: string;
-  question_type?: "multiple_choice";
+  question_type?: "multiple_choice" | "listening_choice" | "listening_fill_blank" | "speaking_prompt";
   choices?: InlineQuizChoice[];
   correct_choice_id?: string;
+  correct_answer?: string;
   explanation?: string;
   source_text?: string;
+  audio_text?: string;
+  min_words?: number;
 }
 
 export type ChatWidgetType = "paywall" | "session_recap" | "mistake_notebook";

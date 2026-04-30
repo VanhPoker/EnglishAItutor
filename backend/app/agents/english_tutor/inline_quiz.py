@@ -39,17 +39,28 @@ def _question(
     correct_choice_id: str,
     explanation: str,
     source_text: str | None = None,
+    question_type: str = "multiple_choice",
+    audio_text: str | None = None,
+    correct_answer: str | None = None,
+    min_words: int | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "id": question_id,
         "prompt": prompt,
         "focus": focus,
-        "question_type": "multiple_choice",
+        "question_type": question_type,
         "choices": choices,
         "correct_choice_id": correct_choice_id,
         "explanation": explanation,
         "source_text": source_text,
     }
+    if audio_text:
+        payload["audio_text"] = audio_text
+    if correct_answer:
+        payload["correct_answer"] = correct_answer
+    if min_words:
+        payload["min_words"] = min_words
+    return payload
 
 
 def _error_question(index: int, item: dict[str, Any], source_text: str) -> dict[str, Any] | None:
@@ -144,13 +155,81 @@ def _structure_question(level: str, source_text: str) -> dict[str, Any]:
     )
 
 
+def _listening_question(topic: str, level: str, source_text: str) -> dict[str, Any]:
+    topic_text = topic or "free conversation"
+    if level in {"A1", "A2"}:
+        audio_text = (
+            f"I like practicing English because it helps me talk about {topic_text}. "
+            "I try to speak a little every day."
+        )
+        choices = [
+            _choice("a", "The speaker practices a little every day."),
+            _choice("b", "The speaker only reads grammar books."),
+            _choice("c", "The speaker does not like English."),
+            _choice("d", "The speaker wants to stop studying."),
+        ]
+        explanation = "Trong audio, người nói nói rằng họ cố gắng nói một chút mỗi ngày."
+    else:
+        audio_text = (
+            f"When I practice {topic_text}, I usually write down one useful phrase first. "
+            "Then I try to use it in a real answer so it becomes easier to remember."
+        )
+        choices = [
+            _choice("a", "The speaker uses a useful phrase in a real answer."),
+            _choice("b", "The speaker memorizes ten unrelated words."),
+            _choice("c", "The speaker avoids using new phrases."),
+            _choice("d", "The speaker only listens and never speaks."),
+        ]
+        explanation = "Ý chính là người nói ghi một cụm hữu ích rồi dùng nó trong câu trả lời thật."
+
+    return _question(
+        question_id="q-listening",
+        prompt="Nghe đoạn audio ngắn rồi chọn ý đúng nhất.",
+        focus="listening",
+        question_type="listening_choice",
+        choices=choices,
+        correct_choice_id="a",
+        explanation=explanation,
+        source_text=source_text,
+        audio_text=audio_text,
+    )
+
+
+def _speaking_prompt(topic: str, level: str, source_text: str) -> dict[str, Any]:
+    min_words = 10 if level in {"A1", "A2"} else 18
+    prompt = (
+        f"Nói bằng tiếng Anh trong 20-40 giây: Give your opinion about {topic}. "
+        "Use at least one reason."
+    )
+    if source_text:
+        prompt = (
+            "Nói lại ý của bạn bằng tiếng Anh tốt hơn trong 20-40 giây. "
+            f"Use this context: “{source_text[:120]}”. Add one reason."
+        )
+
+    return _question(
+        question_id="q-speaking",
+        prompt=prompt,
+        focus="speaking",
+        question_type="speaking_prompt",
+        choices=[],
+        correct_choice_id="",
+        correct_answer="A clear spoken answer with an opinion and at least one reason.",
+        explanation=(
+            "Câu nói tốt cần có ý chính, lý do rõ ràng, và nên dùng từ nối như because, so, but, for example."
+        ),
+        source_text=source_text,
+        min_words=min_words,
+    )
+
+
 def build_inline_exercise_set(state: EnglishTutorState) -> dict | None:
     """Create a compact exercise set from the current practice session."""
     session_stats = state.get("session_stats") or {}
     source_text = _last_user_text(state)
     topic = _topic_display(state)
     level = _clean(state.get("working_level") or state.get("user_level")) or "B1"
-    questions: list[dict[str, Any]] = []
+    text_questions: list[dict[str, Any]] = []
 
     patterns = sorted(
         (session_stats.get("error_patterns") or {}).values(),
@@ -162,29 +241,35 @@ def build_inline_exercise_set(state: EnglishTutorState) -> dict | None:
     for index, item in enumerate(source_items, start=1):
         question = _error_question(index, item, source_text)
         if question:
-            questions.append(question)
+            text_questions.append(question)
 
-    questions.append(_conversation_question(topic, level, source_text))
-    questions.append(_structure_question(level, source_text))
+    text_questions.append(_conversation_question(topic, level, source_text))
+    text_questions.append(_structure_question(level, source_text))
 
     unique_questions: list[dict[str, Any]] = []
     seen_prompts: set[str] = set()
-    for question in questions:
+    for question in text_questions:
         key = f"{question['prompt'].lower()}::{question.get('correct_choice_id', '')}"
         if key in seen_prompts:
             continue
         seen_prompts.add(key)
         unique_questions.append(question)
 
-    if not unique_questions:
+    skill_questions = [
+        _listening_question(topic, level, source_text),
+        _speaking_prompt(topic, level, source_text),
+    ]
+    final_questions = unique_questions[:2] + skill_questions
+
+    if not final_questions:
         return None
 
     return {
         "id": f"inline-exercise-{uuid4()}",
         "type": "exercise_set",
-        "title": "Bộ bài tập nhanh trong phiên",
-        "description": "Làm vài câu ngắn dựa trên nội dung và lỗi xuất hiện trong phiên luyện nói này.",
+        "title": "Bộ luyện nhanh trong phiên",
+        "description": "Làm vài câu chữ, nghe một đoạn ngắn và nói lại ngay trong khung chat.",
         "topic": topic,
         "level": level,
-        "questions": unique_questions[:4],
+        "questions": final_questions[:4],
     }
