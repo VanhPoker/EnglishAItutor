@@ -15,7 +15,7 @@ import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import { generateQuiz, getMe, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
-import { focusLabel } from "../lib/labels";
+import { focusLabel, questionTypeLabel } from "../lib/labels";
 import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
@@ -64,6 +64,14 @@ function trendTone(trend: QuizAttemptResponse["learner_profile"]["recent_trend"]
     label: "Chưa đủ dữ liệu",
     className: "border-gray-200 bg-gray-50 text-gray-600",
   };
+}
+
+function skillLabel(skill: string) {
+  return {
+    text: "Quiz chữ",
+    listening: "Nghe",
+    speaking: "Nói",
+  }[skill] || skill;
 }
 
 export default function QuizResult() {
@@ -223,9 +231,27 @@ export default function QuizResult() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm leading-6 text-gray-700">{attempt.level_upgrade.message}</p>
+                  {Object.keys(attempt.level_upgrade.skill_scores || {}).length > 0 && (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      {Object.entries(attempt.level_upgrade.skill_scores).map(([skill, value]) => (
+                        <div key={skill} className="rounded-lg border border-white/70 bg-white/70 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold uppercase text-gray-500">{skillLabel(skill)}</span>
+                            <span className="text-sm font-bold text-gray-900">{value}%</span>
+                          </div>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                            <div
+                              className={`h-full ${value >= attempt.level_upgrade!.minimum_skill_score ? "bg-green-500" : "bg-amber-500"}`}
+                              style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-1 text-xs text-gray-500">
-                    Ngưỡng nâng cấp nội bộ: {attempt.level_upgrade.pass_threshold}%. Admin vẫn có thể điều chỉnh level
-                    nếu cần.
+                    Ngưỡng nâng cấp nội bộ: tổng {attempt.level_upgrade.pass_threshold}%, nghe/nói tối thiểu{" "}
+                    {attempt.level_upgrade.minimum_skill_score}%. Admin vẫn có thể điều chỉnh level nếu cần.
                   </p>
                 </div>
               </div>
@@ -424,6 +450,8 @@ export default function QuizResult() {
                             {item.is_correct ? "Đúng" : "Cần ôn"}
                           </Badge>
                           <Badge>{focusLabel(item.focus)}</Badge>
+                          <Badge variant="info">{questionTypeLabel(item.question_type)}</Badge>
+                          {item.score != null && <Badge variant={item.score >= 65 ? "success" : "warning"}>{item.score}%</Badge>}
                         </div>
                         {item.image_url && (
                           <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -6,13 +6,16 @@ import {
   ArrowRight,
   CheckCircle2,
   Loader2,
+  Mic,
+  Square,
   Send,
+  Volume2,
 } from "lucide-react";
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import { getQuiz, submitQuiz, type QuizResponse } from "../lib/api";
-import { focusLabel, topicLabel } from "../lib/labels";
+import { focusLabel, questionTypeLabel, topicLabel } from "../lib/labels";
 
 const optionLabels = ["A", "B", "C", "D", "E", "F"];
 
@@ -25,6 +28,16 @@ export default function QuizTake() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [recordingQuestionId, setRecordingQuestionId] = useState<string | null>(null);
+  const [speechMessage, setSpeechMessage] = useState("");
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel();
+      recognitionRef.current?.stop?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!quizId) return;
@@ -52,6 +65,66 @@ export default function QuizTake() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const playListeningAudio = (text?: string | null) => {
+    if (!text?.trim()) return;
+    window.speechSynthesis?.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.9;
+    const voices = window.speechSynthesis?.getVoices?.() || [];
+    const englishVoice = voices.find((voice) => voice.lang.toLowerCase().startsWith("en"));
+    if (englishVoice) utterance.voice = englishVoice;
+    window.speechSynthesis?.speak(utterance);
+  };
+
+  const stopRecording = () => {
+    recognitionRef.current?.stop?.();
+    recognitionRef.current = null;
+    setRecordingQuestionId(null);
+  };
+
+  const startRecording = (questionId: string) => {
+    const Recognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!Recognition) {
+      setSpeechMessage("Trình duyệt này chưa hỗ trợ nhận diện giọng nói. Bạn có thể nhập transcript thủ công.");
+      return;
+    }
+
+    stopRecording();
+    setSpeechMessage("");
+    const recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 1;
+
+    let finalTranscript = answers[questionId] || "";
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0]?.transcript || "";
+        if (event.results[index].isFinal) {
+          finalTranscript = `${finalTranscript} ${transcript}`.trim();
+        } else {
+          interim += transcript;
+        }
+      }
+      const merged = `${finalTranscript}${interim ? ` ${interim}` : ""}`.trim();
+      setAnswers((prev) => ({ ...prev, [questionId]: merged }));
+    };
+    recognition.onerror = () => {
+      setSpeechMessage("Micro hoặc nhận diện giọng nói đang lỗi. Bạn có thể nhập transcript thủ công.");
+      setRecordingQuestionId(null);
+    };
+    recognition.onend = () => {
+      setRecordingQuestionId(null);
+    };
+
+    recognitionRef.current = recognition;
+    setRecordingQuestionId(questionId);
+    recognition.start();
   };
 
   if (loading) {
@@ -86,6 +159,12 @@ export default function QuizTake() {
 
   const progress = Math.round((answeredCount / quiz.questions.length) * 100);
   const unansweredCount = quiz.questions.length - answeredCount;
+  const isListeningQuestion =
+    activeQuestion.type === "listening_choice" || activeQuestion.type === "listening_fill_blank";
+  const isChoiceQuestion = activeQuestion.type === "multiple_choice" || activeQuestion.type === "listening_choice";
+  const isFillBlankQuestion = activeQuestion.type === "fill_blank" || activeQuestion.type === "listening_fill_blank";
+  const isSpeakingQuestion = activeQuestion.type === "speaking_prompt";
+  const speakingMinWords = activeQuestion.min_words || 8;
 
   return (
     <Layout>
@@ -101,6 +180,7 @@ export default function QuizTake() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge variant="info">{quiz.level}</Badge>
                 <Badge>{topicLabel(quiz.topic)}</Badge>
+                <Badge variant="success">Text + Nghe + Nói</Badge>
                 <Badge variant={unansweredCount === 0 ? "success" : "warning"}>
                   Đã trả lời {answeredCount}/{quiz.questions.length}
                 </Badge>
@@ -161,6 +241,9 @@ export default function QuizTake() {
                     }`}
                   >
                     <span>Câu {index + 1}</span>
+                    <span className="hidden text-xs font-medium text-gray-400 lg:inline">
+                      {question.type.startsWith("listening") ? "Nghe" : question.type === "speaking_prompt" ? "Nói" : ""}
+                    </span>
                     {isAnswered && <CheckCircle2 className="hidden h-4 w-4 lg:block" />}
                   </button>
                 );
@@ -172,7 +255,10 @@ export default function QuizTake() {
             <Card>
               <div className="mb-6 flex items-start justify-between gap-3">
                 <div>
-                  <Badge variant="warning">{focusLabel(activeQuestion.focus)}</Badge>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="warning">{focusLabel(activeQuestion.focus)}</Badge>
+                    <Badge variant="info">{questionTypeLabel(activeQuestion.type)}</Badge>
+                  </div>
                   <p className="mt-4 text-sm font-semibold text-gray-500">
                     Câu {activeIndex + 1}/{quiz.questions.length}
                   </p>
@@ -192,7 +278,24 @@ export default function QuizTake() {
                 </div>
               )}
 
-              {activeQuestion.type === "multiple_choice" ? (
+              {isListeningQuestion && (
+                <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-sm font-semibold text-blue-900">Phần nghe</p>
+                  <p className="mt-1 text-sm text-blue-800">
+                    Bấm phát audio, nghe kỹ rồi trả lời. Có thể nghe lại nhiều lần trước khi nộp.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => playListeningAudio(activeQuestion.audio_text)}
+                    className="btn-secondary mt-4 inline-flex items-center gap-2 bg-white"
+                  >
+                    <Volume2 className="h-4 w-4" />
+                    Phát audio
+                  </button>
+                </div>
+              )}
+
+              {isChoiceQuestion ? (
                 <div className="space-y-3">
                   {activeQuestion.options.map((option, optionIndex) => {
                     const selected = answers[activeQuestion.id] === option;
@@ -219,7 +322,7 @@ export default function QuizTake() {
                     );
                   })}
                 </div>
-              ) : (
+              ) : isFillBlankQuestion ? (
                 <label className="block">
                   <span className="field-label">Câu trả lời của bạn</span>
                   <input
@@ -231,6 +334,64 @@ export default function QuizTake() {
                     className="field py-3"
                   />
                 </label>
+              ) : isSpeakingQuestion ? (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                    <p className="text-sm font-semibold text-green-900">Phần nói</p>
+                    <p className="mt-1 text-sm leading-6 text-green-800">
+                      Nói bằng tiếng Anh theo đề bài. Hệ thống sẽ dùng transcript để chấm fluency, từ vựng,
+                      ngữ pháp và độ rõ ý. Nên nói tối thiểu {speakingMinWords} từ.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          recordingQuestionId === activeQuestion.id
+                            ? stopRecording()
+                            : startRecording(activeQuestion.id)
+                        }
+                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                          recordingQuestionId === activeQuestion.id
+                            ? "bg-red-600 text-white hover:bg-red-700"
+                            : "bg-green-700 text-white hover:bg-green-800"
+                        }`}
+                      >
+                        {recordingQuestionId === activeQuestion.id ? (
+                          <>
+                            <Square className="h-4 w-4" />
+                            Dừng ghi
+                          </>
+                        ) : (
+                          <>
+                            <Mic className="h-4 w-4" />
+                            Bắt đầu nói
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAnswers((prev) => ({ ...prev, [activeQuestion.id]: "" }))}
+                        className="btn-secondary bg-white"
+                      >
+                        Xoá transcript
+                      </button>
+                    </div>
+                    {speechMessage && <p className="mt-3 text-sm text-amber-700">{speechMessage}</p>}
+                  </div>
+                  <label className="block">
+                    <span className="field-label">Transcript câu trả lời</span>
+                    <textarea
+                      value={answers[activeQuestion.id] || ""}
+                      onChange={(event) =>
+                        setAnswers((prev) => ({ ...prev, [activeQuestion.id]: event.target.value }))
+                      }
+                      placeholder="Bạn có thể nói để tự nhận transcript, hoặc nhập câu trả lời bằng tay nếu micro lỗi..."
+                      className="field min-h-32 py-3"
+                    />
+                  </label>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">Loại câu hỏi này chưa được hỗ trợ.</p>
               )}
 
               <div className="mt-6 flex items-center justify-between gap-3 border-t border-gray-200 pt-5">

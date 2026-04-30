@@ -287,7 +287,12 @@ export async function getDashboard(): Promise<DashboardStats> {
 
 // ── Quiz API ────────────────────────────────────────────────────
 
-export type QuizQuestionType = "multiple_choice" | "fill_blank";
+export type QuizQuestionType =
+  | "multiple_choice"
+  | "fill_blank"
+  | "listening_choice"
+  | "listening_fill_blank"
+  | "speaking_prompt";
 
 export interface QuizQuestion {
   id: string;
@@ -297,6 +302,9 @@ export interface QuizQuestion {
   explanation: string;
   focus: string;
   image_url?: string | null;
+  audio_text?: string | null;
+  rubric?: string | null;
+  min_words?: number;
 }
 
 export interface QuizResponse {
@@ -448,11 +456,13 @@ export interface QuizImageUploadResponse {
 
 export interface QuestionResult {
   question_id: string;
+  question_type: QuizQuestionType;
   prompt: string;
   focus: string;
   user_answer: string;
   correct_answer: string;
   is_correct: boolean;
+  score?: number | null;
   explanation: string;
   image_url?: string | null;
 }
@@ -488,6 +498,7 @@ export interface LevelUpgradeStatus {
   target_level: string | null;
   available: boolean;
   pass_threshold: number;
+  minimum_skill_score: number;
   question_count: number;
   message: string;
 }
@@ -500,7 +511,10 @@ export interface LevelUpgradeOutcome {
   target_level: string;
   current_level: string;
   pass_threshold: number;
+  minimum_skill_score: number;
   score: number;
+  skill_scores: Record<string, number>;
+  blocking_skills: string[];
   message: string;
 }
 
@@ -523,6 +537,7 @@ export interface LevelUpgradeStartResponse {
   current_level: string;
   target_level: string;
   pass_threshold: number;
+  minimum_skill_score: number;
 }
 
 export async function getQuizzes(): Promise<QuizListItem[]> {

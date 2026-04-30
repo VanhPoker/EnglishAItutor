@@ -31,13 +31,14 @@ from app.utils.curated_quiz_sets import CURATED_OPEN_QUIZ_SETS
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
-QuestionType = Literal["multiple_choice", "fill_blank"]
+QuestionType = Literal["multiple_choice", "fill_blank", "listening_choice", "listening_fill_blank", "speaking_prompt"]
 QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source", "book", "level_test"]
 QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
 CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 MAX_LEARNER_LEVEL_DISTANCE = 2
 LEVEL_UPGRADE_PASS_SCORE = 80
 LEVEL_UPGRADE_QUESTION_COUNT = 12
+LEVEL_UPGRADE_MIN_SKILL_SCORE = 65
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -93,6 +94,9 @@ class QuizQuestion(BaseModel):
     explanation: str = ""
     focus: str = "grammar"
     image_url: Optional[str] = None
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = Field(default=8, ge=1, le=80)
 
     @field_validator("options")
     @classmethod
@@ -108,6 +112,14 @@ class QuizQuestion(BaseModel):
         cleaned = value.strip()
         return cleaned or None
 
+    @field_validator("audio_text", "rubric")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
+
 
 class QuizQuestionPublic(BaseModel):
     id: str
@@ -117,6 +129,9 @@ class QuizQuestionPublic(BaseModel):
     explanation: str = ""
     focus: str = "grammar"
     image_url: Optional[str] = None
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = 8
 
 
 class QuizCreateRequest(BaseModel):
@@ -287,11 +302,13 @@ class QuizImageUploadResponse(BaseModel):
 
 class QuestionResult(BaseModel):
     question_id: str
+    question_type: QuestionType = "multiple_choice"
     prompt: str
     focus: str
     user_answer: str
     correct_answer: str
     is_correct: bool
+    score: Optional[int] = None
     explanation: str = ""
     image_url: Optional[str] = None
 
@@ -327,6 +344,7 @@ class LevelUpgradeStatusResponse(BaseModel):
     target_level: Optional[str] = None
     available: bool
     pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
     question_count: int = LEVEL_UPGRADE_QUESTION_COUNT
     message: str
 
@@ -339,7 +357,10 @@ class LevelUpgradeOutcome(BaseModel):
     target_level: str
     current_level: str
     pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
     score: int
+    skill_scores: dict[str, int] = Field(default_factory=dict)
+    blocking_skills: list[str] = Field(default_factory=list)
     message: str
 
 
@@ -348,6 +369,7 @@ class LevelUpgradeStartResponse(BaseModel):
     current_level: str
     target_level: str
     pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
 
 
 class GeneratedQuizQuestion(BaseModel):
@@ -358,6 +380,16 @@ class GeneratedQuizQuestion(BaseModel):
     correct_answer: str
     explanation: str = ""
     focus: str = "grammar"
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = 8
+
+
+class SpeakingQuestionEvaluation(BaseModel):
+    score: int = Field(ge=0, le=100)
+    summary: str
+    strengths: list[str] = Field(default_factory=list)
+    improvement_areas: list[str] = Field(default_factory=list)
 
 
 class QuizAttemptResponse(BaseModel):
@@ -434,7 +466,7 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
             continue
 
         options = [item.strip() for item in question.options if item and item.strip()]
-        if question.type == "multiple_choice":
+        if question.type in {"multiple_choice", "listening_choice"}:
             answer_key = correct_answer.strip().upper()
             key_map = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
             if answer_key in key_map and key_map[answer_key] < len(options):
@@ -446,6 +478,13 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
         else:
             options = []
 
+        audio_text = question.audio_text
+        if question.type in {"listening_choice", "listening_fill_blank"} and not audio_text:
+            audio_text = prompt
+        rubric = question.rubric
+        if question.type == "speaking_prompt" and not rubric:
+            rubric = correct_answer
+
         normalized.append(
             QuizQuestion(
                 id=question.id.strip() or f"q{index}",
@@ -456,6 +495,9 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
                 explanation=explanation,
                 focus=focus,
                 image_url=question.image_url,
+                audio_text=audio_text,
+                rubric=rubric,
+                min_words=question.min_words,
             )
         )
     return normalized
@@ -471,6 +513,9 @@ def _public_question(question: dict) -> QuizQuestionPublic:
         explanation=data.explanation,
         focus=data.focus,
         image_url=data.image_url,
+        audio_text=data.audio_text,
+        rubric=data.rubric,
+        min_words=data.min_words,
     )
 
 
@@ -1582,22 +1627,23 @@ def _fallback_level_upgrade_questions(current_level: str, target_level: str, cou
         ),
         QuizQuestion(
             id="q8",
-            type="multiple_choice",
-            prompt="Which sentence gives an opinion with a clear reason?",
+            type="listening_choice",
+            prompt="Listen to the short answer. What is the speaker's main reason for preferring online lessons?",
             options=[
-                "I prefer online lessons because I can review the recording later.",
-                "I prefer online lessons because convenient and recording.",
-                "Online lessons I prefer because can review later.",
-                "I prefer online lessons, so I can review because later.",
+                "The speaker can review the recording later.",
+                "The speaker dislikes asking questions.",
+                "The speaker wants shorter lessons.",
+                "The speaker cannot travel to class.",
             ],
-            correct_answer="I prefer online lessons because I can review the recording later.",
-            explanation="Câu đúng có chủ ngữ và động từ đầy đủ sau 'because'.",
-            focus="speaking",
+            correct_answer="The speaker can review the recording later.",
+            explanation="Trong audio, lý do chính là có thể xem lại bản ghi sau buổi học.",
+            focus="listening",
+            audio_text="I prefer online lessons because I can review the recording later. That helps me remember new vocabulary and correct my mistakes.",
         ),
         QuizQuestion(
             id="q9",
-            type="multiple_choice",
-            prompt="Read: The notice says, 'Please submit your application by Friday noon.' What should applicants do?",
+            type="listening_choice",
+            prompt="Listen to the announcement. What should applicants do?",
             options=[
                 "Send the application before or by Friday noon.",
                 "Start writing the application after Friday noon.",
@@ -1606,39 +1652,40 @@ def _fallback_level_upgrade_questions(current_level: str, target_level: str, cou
             ],
             correct_answer="Send the application before or by Friday noon.",
             explanation="'By Friday noon' nghĩa là hạn chót là trưa thứ Sáu.",
-            focus="comprehension",
+            focus="listening",
+            audio_text="Please submit your application by Friday noon. Late applications may not be accepted, so check your documents carefully before sending them.",
         ),
         QuizQuestion(
             id="q10",
-            type="multiple_choice",
-            prompt="Choose the best connector: I wanted to join the class; _____, I had to work late.",
-            options=["however", "because", "so", "for example"],
-            correct_answer="however",
-            explanation="'However' nối hai ý đối lập trong văn viết hoặc nói trang trọng hơn.",
-            focus="structure",
+            type="listening_fill_blank",
+            prompt="Listen and complete the missing word: The class was challenging, _____ it helped me speak more confidently.",
+            options=[],
+            correct_answer="but",
+            explanation="'But' nối hai ý tương phản: khó nhưng hữu ích.",
+            focus="listening",
+            audio_text="The class was challenging, but it helped me speak more confidently.",
         ),
         QuizQuestion(
             id="q11",
-            type="fill_blank",
-            prompt="Complete the sentence: This exercise is similar _____ the one we did yesterday.",
+            type="speaking_prompt",
+            prompt="Speak for 30-45 seconds: Describe one English learning habit that helps you improve, and explain why.",
             options=[],
-            correct_answer="to",
-            explanation="Cụm đúng là 'similar to'.",
-            focus="vocabulary",
+            correct_answer="A clear spoken answer that describes one habit and gives at least one reason.",
+            explanation="Bài nói cần có thói quen cụ thể, lý do rõ ràng và câu nối tự nhiên.",
+            focus="speaking",
+            rubric="Score fluency, coherence, vocabulary range, grammar accuracy, and whether the learner gives a clear reason.",
+            min_words=18,
         ),
         QuizQuestion(
             id="q12",
-            type="multiple_choice",
-            prompt="Choose the most precise sentence.",
-            options=[
-                "If I had more time, I would practise speaking every day.",
-                "If I have more time, I would practise speaking every day.",
-                "If I had more time, I will practise speaking every day.",
-                "If I would have more time, I practised speaking every day.",
-            ],
-            correct_answer="If I had more time, I would practise speaking every day.",
-            explanation="Câu điều kiện loại 2 dùng 'If + past simple, would + V'.",
-            focus="grammar",
+            type="speaking_prompt",
+            prompt="Speak for 30-45 seconds: Give your opinion about studying with an AI tutor. Mention one advantage and one limitation.",
+            options=[],
+            correct_answer="A clear opinion with one advantage, one limitation, and connected sentences.",
+            explanation="Bài nói cần có quan điểm, một điểm tốt, một hạn chế và cách nối ý mạch lạc.",
+            focus="speaking",
+            rubric="Score task response, fluency, lexical resource, grammatical range and accuracy, and pronunciation clarity inferred from transcript quality.",
+            min_words=22,
         ),
     ]
     return templates[:count]
@@ -1655,11 +1702,16 @@ Learner context:
 
 Question design:
 - Exactly {LEVEL_UPGRADE_QUESTION_COUNT} questions.
-- Assess target-level readiness across grammar/language use, vocabulary, reading comprehension, sentence structure, and practical conversation.
-- Include short original reading contexts inside some prompts, so no external audio or image is needed.
-- Use only multiple_choice and fill_blank.
+- Use 7 text questions, 3 listening questions, and 2 speaking prompts.
+- Assess target-level readiness across grammar/language use, vocabulary, reading comprehension, listening comprehension, sentence structure, and spoken communication.
+- For listening questions, use type listening_choice or listening_fill_blank and provide audio_text.
+- For speaking prompts, use type speaking_prompt, provide correct_answer as the target response description, rubric, and min_words.
+- Use only multiple_choice, fill_blank, listening_choice, listening_fill_blank, and speaking_prompt.
 - For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For listening_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
 - For fill_blank, provide no options and a short correct_answer.
+- For listening_fill_blank, provide no options and a short correct_answer.
+- For speaking_prompt, provide no options.
 - Use focus labels like grammar, vocabulary, word_choice, structure, comprehension, conversation, speaking.
 - Explanations must be in Vietnamese and tell the learner what rule or skill the question checks.
 - Distractors should reflect common Vietnamese learner mistakes.
@@ -1694,13 +1746,17 @@ Return structured data only.
                 data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
             questions.append(QuizQuestion.model_validate(data))
         questions = _normalize_questions(questions)
-        if len(questions) >= LEVEL_UPGRADE_QUESTION_COUNT:
+        listening_count = sum(1 for item in questions if item.type in {"listening_choice", "listening_fill_blank"})
+        speaking_count = sum(1 for item in questions if item.type == "speaking_prompt")
+        if len(questions) >= LEVEL_UPGRADE_QUESTION_COUNT and listening_count >= 2 and speaking_count >= 2:
             return GeneratedQuiz(
                 title=generated.title or title,
                 description=generated.description or description,
                 questions=_generated_questions_from_quiz_questions(questions[:LEVEL_UPGRADE_QUESTION_COUNT]),
             )
-        raise ValueError(f"Only generated {len(questions)} valid questions")
+        raise ValueError(
+            f"Generated mix invalid: {len(questions)} valid, {listening_count} listening, {speaking_count} speaking"
+        )
     except Exception as exc:
         logger.warning(f"Level-up quiz generation failed, using deterministic fallback: {exc}")
         return GeneratedQuiz(
@@ -1815,31 +1871,127 @@ Return structured data only.
     )
 
 
-def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str]) -> tuple[int, int, list[QuestionResult]]:
+def _fallback_speaking_evaluation(question: QuizQuestion, answer: str) -> SpeakingQuestionEvaluation:
+    words = re.findall(r"[A-Za-z']+", answer or "")
+    word_count = len(words)
+    if word_count == 0:
+        return SpeakingQuestionEvaluation(
+            score=0,
+            summary="Chưa có câu trả lời nói để chấm.",
+            improvement_areas=["Hãy bật micro hoặc nhập transcript câu trả lời trước khi nộp."],
+        )
+
+    connectors = {"because", "so", "but", "however", "although", "first", "also", "for example", "in my opinion"}
+    answer_lower = answer.lower()
+    connector_hits = sum(1 for item in connectors if item in answer_lower)
+    min_words = max(1, question.min_words)
+
+    score = 45
+    if word_count >= min_words:
+        score += 20
+    if word_count >= min_words + 10:
+        score += 10
+    if connector_hits:
+        score += min(15, connector_hits * 5)
+    if re.search(r"\b(i think|in my opinion|for example|because)\b", answer_lower):
+        score += 10
+
+    score = min(score, 88)
+    return SpeakingQuestionEvaluation(
+        score=score,
+        summary=(
+            f"Câu trả lời có khoảng {word_count} từ. "
+            "Fallback heuristic đã chấm dựa trên độ dài, độ rõ ý và từ nối vì AI rubric tạm thời không phản hồi."
+        ),
+        strengths=["Có câu trả lời nói để hệ thống phân tích."],
+        improvement_areas=["Nói dài hơn, thêm ví dụ cụ thể và dùng từ nối rõ hơn để tăng điểm speaking."],
+    )
+
+
+async def _score_speaking_answer(question: QuizQuestion, answer: str, target_level: str) -> SpeakingQuestionEvaluation:
+    cleaned = " ".join((answer or "").split())
+    if not cleaned:
+        return _fallback_speaking_evaluation(question, cleaned)
+
+    prompt = f"""
+Grade this spoken English answer for an internal CEFR level-up test.
+
+Target CEFR level: {target_level}
+Question: {question.prompt}
+Expected task: {question.correct_answer}
+Rubric: {question.rubric or question.correct_answer}
+Minimum words expected: {question.min_words}
+
+Learner transcript:
+{cleaned}
+
+Score 0-100 using:
+- Fluency and coherence
+- Vocabulary range
+- Grammar range and accuracy
+- Task response
+- Pronunciation clarity inferred from transcript quality, repeated fragments, and recognition issues
+
+Return concise Vietnamese feedback.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.1).with_structured_output(SpeakingQuestionEvaluation)
+        evaluation: SpeakingQuestionEvaluation = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You are a strict but fair CEFR speaking examiner for Vietnamese learners. "
+                        "You grade only the provided transcript and do not over-credit very short answers."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        return evaluation
+    except Exception as exc:
+        logger.warning(f"Speaking evaluation failed, using fallback: {exc}")
+        return _fallback_speaking_evaluation(question, cleaned)
+
+
+async def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str], target_level: str = "B1") -> tuple[int, int, list[QuestionResult]]:
     results = []
     correct_count = 0
+    score_total = 0
 
     for question in questions:
         user_answer = answers.get(question.id, "")
         expected = question.correct_answer
-        is_correct = _normalize_answer(user_answer) == _normalize_answer(expected)
+        explanation = question.explanation
+        if question.type == "speaking_prompt":
+            evaluation = await _score_speaking_answer(question, user_answer, target_level)
+            question_score = max(0, min(100, int(evaluation.score)))
+            is_correct = question_score >= LEVEL_UPGRADE_MIN_SKILL_SCORE
+            feedback_bits = [evaluation.summary, *evaluation.improvement_areas[:2]]
+            explanation = " ".join(item for item in feedback_bits if item).strip() or explanation
+        else:
+            is_correct = _normalize_answer(user_answer) == _normalize_answer(expected)
+            question_score = 100 if is_correct else 0
+
         if is_correct:
             correct_count += 1
+        score_total += question_score
         results.append(
             QuestionResult(
                 question_id=question.id,
+                question_type=question.type,
                 prompt=question.prompt,
                 focus=question.focus,
                 user_answer=user_answer,
                 correct_answer=expected,
                 is_correct=is_correct,
-                explanation=question.explanation,
+                score=question_score,
+                explanation=explanation,
                 image_url=question.image_url,
             )
         )
 
     total = len(questions)
-    score = round((correct_count / total) * 100) if total else 0
+    score = round(score_total / total) if total else 0
     return score, correct_count, results
 
 
@@ -2028,7 +2180,27 @@ def _fallback_review(score: int, results: list[QuestionResult]) -> QuizReview:
     )
 
 
-async def _level_upgrade_outcome(db, user: User, quiz: Quiz, score: int) -> LevelUpgradeOutcome | None:
+def _level_upgrade_skill_scores(results: list[QuestionResult]) -> dict[str, int]:
+    grouped: dict[str, list[int]] = {"text": [], "listening": [], "speaking": []}
+    for item in results:
+        item_score = item.score if item.score is not None else (100 if item.is_correct else 0)
+        if item.question_type in {"listening_choice", "listening_fill_blank"} or item.focus == "listening":
+            grouped["listening"].append(item_score)
+        elif item.question_type == "speaking_prompt" or item.focus == "speaking":
+            grouped["speaking"].append(item_score)
+        else:
+            grouped["text"].append(item_score)
+
+    return {skill: round(sum(values) / len(values)) for skill, values in grouped.items() if values}
+
+
+async def _level_upgrade_outcome(
+    db,
+    user: User,
+    quiz: Quiz,
+    score: int,
+    results: list[QuestionResult],
+) -> LevelUpgradeOutcome | None:
     if quiz.source != "level_test":
         return None
 
@@ -2038,7 +2210,12 @@ async def _level_upgrade_outcome(db, user: User, quiz: Quiz, score: int) -> Leve
     if target_level not in CEFR_LEVELS:
         return None
 
-    passed = score >= LEVEL_UPGRADE_PASS_SCORE
+    skill_scores = _level_upgrade_skill_scores(results)
+    blocking_skills = [
+        skill for skill, skill_score in skill_scores.items()
+        if skill in {"listening", "speaking"} and skill_score < LEVEL_UPGRADE_MIN_SKILL_SCORE
+    ]
+    passed = score >= LEVEL_UPGRADE_PASS_SCORE and not blocking_skills
     upgraded = False
     current_level = previous_level
     if passed and db_user and _level_index(target_level) > _level_index(previous_level):
@@ -2048,9 +2225,19 @@ async def _level_upgrade_outcome(db, user: User, quiz: Quiz, score: int) -> Leve
         current_level = target_level
 
     if upgraded:
-        message = f"Đạt {score}%. Bạn đã được nâng từ {previous_level} lên {target_level} trong hệ thống."
+        message = (
+            f"Đạt {score}% và đủ ngưỡng listening/speaking. "
+            f"Bạn đã được nâng từ {previous_level} lên {target_level} trong hệ thống."
+        )
     elif passed:
-        message = f"Đạt {score}%. Bạn đã đủ điều kiện cho {target_level}, nhưng level hiện tại không cần cập nhật thêm."
+        message = f"Đạt {score}% và đủ điều kiện cho {target_level}, nhưng level hiện tại không cần cập nhật thêm."
+    elif blocking_skills:
+        labels = {"listening": "nghe", "speaking": "nói"}
+        weak_text = ", ".join(labels.get(item, item) for item in blocking_skills)
+        message = (
+            f"Tổng điểm {score}%, nhưng kỹ năng {weak_text} chưa đạt ngưỡng {LEVEL_UPGRADE_MIN_SKILL_SCORE}%. "
+            f"Chưa thể nâng lên {target_level}; hãy luyện lại phần này rồi thử lại."
+        )
     else:
         message = (
             f"Đạt {score}%. Chưa đủ ngưỡng {LEVEL_UPGRADE_PASS_SCORE}% để nâng lên {target_level}. "
@@ -2064,7 +2251,10 @@ async def _level_upgrade_outcome(db, user: User, quiz: Quiz, score: int) -> Leve
         target_level=target_level,
         current_level=current_level,
         pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+        minimum_skill_score=LEVEL_UPGRADE_MIN_SKILL_SCORE,
         score=score,
+        skill_scores=skill_scores,
+        blocking_skills=blocking_skills,
         message=message,
     )
 
@@ -2212,7 +2402,8 @@ async def get_level_upgrade_status(user: User = Depends(require_role("learner"))
         available=True,
         message=(
             f"Làm bài kiểm tra nội bộ từ {current_level} lên {target_level}. "
-            f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% để nâng cấp."
+            f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% tổng điểm và không dưới "
+            f"{LEVEL_UPGRADE_MIN_SKILL_SCORE}% ở phần nghe/nói."
         ),
     )
 
@@ -2244,6 +2435,7 @@ async def start_level_upgrade_exam(user: User = Depends(require_role("learner"))
             current_level=current_level,
             target_level=target_level,
             pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+            minimum_skill_score=LEVEL_UPGRADE_MIN_SKILL_SCORE,
         )
 
 
@@ -2780,7 +2972,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
         _assert_level_allowed(user, quiz.level)
 
         questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
-        score, correct_count, question_results = _score_quiz(questions, req.answers)
+        score, correct_count, question_results = await _score_quiz(questions, req.answers, target_level=quiz.level)
         learner_profile = await _build_learner_profile(
             db,
             user.id,
@@ -2791,7 +2983,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             },
         )
         review = await _build_ai_review(quiz, score, question_results, learner_profile)
-        level_upgrade = await _level_upgrade_outcome(db, user, quiz, score)
+        level_upgrade = await _level_upgrade_outcome(db, user, quiz, score, question_results)
         review_payload = review.model_dump()
         if level_upgrade:
             review_payload["_level_upgrade"] = level_upgrade.model_dump()

@@ -48,6 +48,9 @@ const subscriptionLabels: Record<string, string> = {
 const questionTypeLabels: Record<string, string> = {
   multiple_choice: "Trắc nghiệm",
   fill_blank: "Điền từ",
+  listening_choice: "Nghe chọn đáp án",
+  listening_fill_blank: "Nghe điền từ",
+  speaking_prompt: "Nói",
 };
 
 function humanize(value: string) {

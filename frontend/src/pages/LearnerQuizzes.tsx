@@ -95,7 +95,7 @@ export default function LearnerQuizzes() {
     try {
       const result = await startLevelUpgradeExam();
       setActionMessage(
-        `Đã tạo bài thi nâng cấp ${result.current_level} lên ${result.target_level}. Cần đạt ${result.pass_threshold}% để nâng cấp.`
+        `Đã tạo bài thi nâng cấp ${result.current_level} lên ${result.target_level}. Cần đạt ${result.pass_threshold}% tổng điểm và tối thiểu ${result.minimum_skill_score}% ở phần nghe/nói.`
       );
       navigate(`/quizzes/${result.quiz.id}`);
     } catch (err) {
@@ -201,7 +201,7 @@ export default function LearnerQuizzes() {
                     "Làm bài kiểm tra nội bộ theo CEFR để mở cấp học kế tiếp trong hệ thống."}
                 </p>
                 <p className="mt-1 text-xs text-blue-700">
-                  Đây là bài đánh giá nội bộ, không thay thế chứng chỉ quốc tế như IELTS, Cambridge hay EF SET.
+                  Bài gồm quiz chữ, nghe audio và nói qua micro; đây là đánh giá nội bộ, không thay thế chứng chỉ quốc tế.
                 </p>
               </div>
             </div>
