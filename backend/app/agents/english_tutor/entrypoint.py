@@ -51,7 +51,27 @@ FE_CHAT_WIDGET_TOPIC = os.getenv("FE_CHAT_WIDGET_TOPIC", "ai-chat-widget")
 EXERCISE_OFFER_TURN = int(os.getenv("EXERCISE_OFFER_TURN", "6"))
 SESSION_RECAP_TURN = int(os.getenv("SESSION_RECAP_TURN", "6"))
 
-EXERCISE_REQUEST_PHRASES = (
+LISTENING_EXERCISE_PHRASES = (
+    "practice listening",
+    "listening practice",
+    "listening exercise",
+    "listening task",
+    "bai nghe",
+    "luyen nghe",
+    "cho toi luyen nghe",
+    "muon luyen nghe",
+)
+SPEAKING_EXERCISE_PHRASES = (
+    "practice speaking",
+    "speaking practice",
+    "speaking exercise",
+    "speaking task",
+    "bai noi",
+    "luyen noi",
+    "cho toi luyen noi",
+    "muon luyen noi",
+)
+GENERAL_EXERCISE_REQUEST_PHRASES = (
     "lam bai tap",
     "lam bai",
     "bai tap",
@@ -90,16 +110,11 @@ EXERCISE_REQUEST_PHRASES = (
     "practice a short exercise",
     "give me a quiz",
     "give me questions",
-    "listening",
-    "practice listening",
-    "listening exercise",
-    "bai nghe",
-    "luyen nghe",
-    "speaking",
-    "practice speaking",
-    "speaking exercise",
-    "bai noi",
-    "luyen noi",
+)
+EXERCISE_REQUEST_PHRASES = (
+    GENERAL_EXERCISE_REQUEST_PHRASES
+    + LISTENING_EXERCISE_PHRASES
+    + SPEAKING_EXERCISE_PHRASES
 )
 AFFIRMATIVE_PHRASES = (
     "yes",
@@ -172,7 +187,33 @@ def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
 
 
 def _wants_exercise(text: str | None) -> bool:
-    return _contains_phrase(_normalize_intent_text(text), EXERCISE_REQUEST_PHRASES)
+    normalized = _normalize_intent_text(text)
+    if normalized in {"listening", "speaking", "nghe", "noi"}:
+        return True
+    return _contains_phrase(normalized, EXERCISE_REQUEST_PHRASES)
+
+
+def _exercise_mode(text: str | None) -> str:
+    normalized = _normalize_intent_text(text)
+    if normalized in {"listening", "nghe"} or _contains_phrase(
+        normalized, LISTENING_EXERCISE_PHRASES
+    ):
+        return "listening"
+    if normalized in {"speaking", "noi"} or _contains_phrase(
+        normalized, SPEAKING_EXERCISE_PHRASES
+    ):
+        return "speaking"
+    return "auto"
+
+
+def _exercise_reply(mode: str) -> str:
+    if mode == "listening":
+        return "Sure. I opened a listening exercise for you."
+    if mode == "speaking":
+        return "Sure. I opened a speaking exercise for you."
+    if mode == "grammar":
+        return "Sure. I opened a short correction exercise from this session."
+    return "Sure. I opened a short exercise set from what we have practiced."
 
 
 def _wants_recap(text: str | None) -> bool:
@@ -224,6 +265,7 @@ async def entrypoint(ctx: JobContext):
     last_widget_turn = 0
     last_widget_request_key = ""
     last_widget_sent_at = 0.0
+    exercise_widget_count = 0
     exercise_offer_pending = False
     exercise_offer_asked = False
     exercise_offer_turn = 0
@@ -391,8 +433,12 @@ async def entrypoint(ctx: JobContext):
         state_values: dict,
         turn_number: int,
         request_text: str | None = None,
+        exercise_mode: str = "auto",
     ) -> bool:
-        nonlocal last_widget_turn, last_widget_request_key, last_widget_sent_at
+        nonlocal exercise_widget_count
+        nonlocal last_widget_turn
+        nonlocal last_widget_request_key
+        nonlocal last_widget_sent_at
 
         request_key = f"{turn_number}:{_normalize_intent_text(request_text)[:120]}"
         if request_key == last_widget_request_key and time.time() - last_widget_sent_at < 8:
@@ -401,15 +447,26 @@ async def entrypoint(ctx: JobContext):
         if not request_text and turn_number == last_widget_turn:
             return False
 
-        payload = build_inline_exercise_set(state_values)
+        sequence = exercise_widget_count + 1
+        payload = build_inline_exercise_set(
+            state_values,
+            request_text=request_text,
+            exercise_mode=exercise_mode,
+            sequence=sequence,
+        )
         if not payload:
             return False
 
         await send_quiz_widget(payload)
+        exercise_widget_count = sequence
         last_widget_turn = turn_number
         last_widget_request_key = request_key
         last_widget_sent_at = time.time()
-        logger.info("Inline exercise set emitted for turn {}", turn_number)
+        logger.info(
+            "Inline exercise set emitted for turn {} with mode {}",
+            turn_number,
+            payload.get("mode"),
+        )
         return True
 
     async def maybe_handle_exercise_flow(force_request_text: str | None = None) -> bool:
@@ -434,10 +491,12 @@ async def entrypoint(ctx: JobContext):
                 return False
 
             explicit_request = _wants_exercise(user_text)
+            requested_mode = _exercise_mode(user_text)
             logger.info(
-                "Exercise flow check: turn={}, explicit_request={}, text={}",
+                "Exercise flow check: turn={}, explicit_request={}, mode={}, text={}",
                 turn_number,
                 explicit_request,
+                requested_mode,
                 user_text[:80],
             )
 
@@ -447,11 +506,16 @@ async def entrypoint(ctx: JobContext):
                     return False
 
                 if _is_affirmative(user_text) or explicit_request:
-                    emitted = await emit_exercise_set(state_values, turn_number, user_text)
+                    emitted = await emit_exercise_set(
+                        state_values,
+                        turn_number,
+                        user_text,
+                        requested_mode if explicit_request else "auto",
+                    )
                     exercise_offer_pending = False
                     if emitted:
                         await session.say(
-                            "Great. I opened a short exercise set from this session. Try it now.",
+                            f"{_exercise_reply(requested_mode if explicit_request else 'auto')} Try it now.",
                             allow_interruptions=False,
                         )
                     return emitted
@@ -460,10 +524,15 @@ async def entrypoint(ctx: JobContext):
                     exercise_offer_pending = False
 
             if explicit_request:
-                emitted = await emit_exercise_set(state_values, turn_number, user_text)
+                emitted = await emit_exercise_set(
+                    state_values,
+                    turn_number,
+                    user_text,
+                    requested_mode,
+                )
                 if emitted:
                     await session.say(
-                        "Sure. I opened a short exercise set from what we have practiced.",
+                        _exercise_reply(requested_mode),
                         allow_interruptions=False,
                     )
                 return emitted

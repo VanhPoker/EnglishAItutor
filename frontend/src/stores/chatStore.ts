@@ -53,6 +53,7 @@ export interface InlineQuizQuestion {
 export interface InlineQuizWidget {
   id: string;
   type?: "exercise_set";
+  mode?: "auto" | "grammar" | "listening" | "speaking" | "mixed";
   title: string;
   description?: string;
   topic?: string;

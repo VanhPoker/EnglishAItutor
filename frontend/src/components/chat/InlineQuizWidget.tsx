@@ -73,6 +73,14 @@ function buildReviewText(questions: InlineQuizQuestion[], answers: Record<string
   return "Nên đi chậm lại một chút. Các câu sai đang chỉ ra phần cần ôn ngay trong phiên, hãy đọc lại giải thích rồi thử dùng một câu đúng khi nói tiếp.";
 }
 
+function widgetModeLabel(mode?: InlineQuizWidgetData["mode"]) {
+  if (mode === "listening") return "Bài nghe trong chat";
+  if (mode === "speaking") return "Bài nói trong chat";
+  if (mode === "mixed") return "Bài tổng hợp trong chat";
+  if (mode === "grammar") return "Bài sửa lỗi trong chat";
+  return "Bài tập trong chat";
+}
+
 export default function InlineQuizWidget({ widget, onAnswer, onSubmit }: InlineQuizWidgetProps) {
   const recognitionRef = useRef<any>(null);
   const [recordingQuestionId, setRecordingQuestionId] = useState<string | null>(null);
@@ -155,7 +163,7 @@ export default function InlineQuizWidget({ widget, onAnswer, onSubmit }: InlineQ
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase text-emerald-700">
-            Bài tập trong chat
+            {widgetModeLabel(widget.mode)}
           </p>
           <h4 className="mt-1 text-sm font-semibold text-gray-900">{widget.title}</h4>
           {widget.description && (
