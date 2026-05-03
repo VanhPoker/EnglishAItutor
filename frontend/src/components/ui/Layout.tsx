@@ -71,8 +71,8 @@ export default function Layout({ children }: LayoutProps) {
             to={path}
             className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
               active
-                ? "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100"
-                : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                ? "bg-primary-50 text-primary-800 ring-1 ring-inset ring-primary-100"
+                : "text-gray-600 hover:bg-white hover:text-gray-900 hover:shadow-sm"
             }`}
           >
             <Icon className="h-4 w-4 shrink-0" />
@@ -84,16 +84,25 @@ export default function Layout({ children }: LayoutProps) {
   );
 
   return (
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef6ff_42%,#f8fafc_100%)] lg:grid lg:grid-cols-[260px_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-gray-200 bg-white/95 shadow-sm backdrop-blur lg:flex">
-        <div className="flex h-16 items-center border-b border-gray-200 px-5">
+    <div className="app-ambient min-h-screen lg:grid lg:grid-cols-[272px_1fr]">
+      <aside className="sticky top-0 hidden h-screen flex-col border-r border-white/70 bg-white/80 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl lg:flex">
+        <div className="border-b border-white/80 px-5 py-5">
           <BrandMark title={productName} caption={productCaption} />
+        </div>
+
+        <div className="px-4 pt-4">
+          <div className="rounded-lg border border-primary-100 bg-primary-50/80 p-3">
+            <p className="text-[11px] font-semibold uppercase text-primary-800">
+              {isAdmin ? "Bảng điều khiển" : "Phiên học hôm nay"}
+            </p>
+            <div className="signal-line mt-2 h-1.5 rounded-full bg-primary-200" />
+          </div>
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-4">{nav}</nav>
 
         {user && (
-          <div className="border-t border-gray-200 p-4">
+          <div className="border-t border-white/80 p-4">
             <div className="mb-3">
               <p className="truncate text-sm font-semibold text-gray-900">{user.name}</p>
               <p className="text-xs text-gray-500">
@@ -112,8 +121,8 @@ export default function Layout({ children }: LayoutProps) {
         )}
       </aside>
 
-      <div className="min-w-0">
-        <header className="sticky top-0 z-40 border-b border-gray-200 bg-white lg:hidden">
+      <div className="study-grid min-w-0">
+        <header className="sticky top-0 z-40 border-b border-white/80 bg-white/90 backdrop-blur lg:hidden">
           <div className="flex h-14 items-center justify-between px-4">
             <Link to={homePath} className="flex items-center gap-2">
               <BrandMark title={productName} size="sm" />

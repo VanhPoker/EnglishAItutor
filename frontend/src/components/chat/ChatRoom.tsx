@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ConnectionState } from "livekit-client";
-import { Loader2, LockKeyhole, Wifi, WifiOff } from "lucide-react";
+import { Loader2, LockKeyhole, Mic2, Sparkles, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useLiveKit } from "../../hooks/useLiveKit";
 import { useUserStore } from "../../stores/userStore";
@@ -137,16 +137,33 @@ export default function ChatRoom() {
     }
 
     return (
-      <div className="relative flex-1 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 mx-auto bg-primary-100 rounded-full flex items-center justify-center">
-            <WifiOff className="w-8 h-8 text-primary-400" />
+      <div className="relative flex-1 flex items-center justify-center overflow-hidden px-4">
+        <div className="absolute inset-x-8 top-10 h-px bg-primary-200 signal-line opacity-80" />
+        <div className="w-full max-w-xl animate-soft-rise rounded-lg border border-white bg-white/86 p-8 text-center shadow-[0_24px_70px_rgba(15,23,42,0.14)] backdrop-blur-xl">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-lg bg-primary-50 text-primary-800 ring-1 ring-primary-100">
+            <WifiOff className="w-8 h-8" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-gray-800">Sẵn sàng luyện nói chưa?</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              Kết nối để bắt đầu phiên trò chuyện tiếng Anh
+            <p className="mt-5 inline-flex items-center gap-2 rounded-lg bg-accent-50 px-3 py-1.5 text-xs font-semibold text-accent-700">
+              <Sparkles className="h-3.5 w-3.5" />
+              Voice + Chat + Quiz widget
             </p>
+            <h3 className="mt-4 text-2xl font-bold text-gray-900">Bắt đầu phiên với Gia sư AI</h3>
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-gray-500">
+              Nói tiếng Anh, nhắn câu hỏi, hoặc yêu cầu bài nghe/bài nói ngay trong khung chat.
+            </p>
+          </div>
+          <div className="my-6 grid gap-2 text-left sm:grid-cols-3">
+            {[
+              ["01", "Nói tự nhiên"],
+              ["02", "Luyện nghe"],
+              ["03", "Làm quiz"],
+            ].map(([step, label]) => (
+              <div key={step} className="rounded-lg border border-gray-200 bg-white p-3">
+                <p className="text-xs font-bold text-primary-800">{step}</p>
+                <p className="mt-1 text-sm font-semibold text-gray-800">{label}</p>
+              </div>
+            ))}
           </div>
           <button
             onClick={handleConnect}
@@ -160,7 +177,7 @@ export default function ChatRoom() {
               </>
             ) : (
               <>
-                <Wifi className="w-4 h-4" />
+                <Mic2 className="w-4 h-4" />
                 Bắt đầu phiên học
               </>
             )}
@@ -173,7 +190,7 @@ export default function ChatRoom() {
   return (
     <div className="flex-1 flex flex-col h-full">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200/50 bg-white/60">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/80 bg-white/75 backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
           <span className="text-xs text-gray-500">Đã kết nối</span>

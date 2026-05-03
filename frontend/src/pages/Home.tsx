@@ -83,12 +83,16 @@ export default function Home() {
   return (
     <Layout>
       <div className="page-shell">
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 overflow-hidden rounded-lg border border-white bg-[linear-gradient(135deg,rgba(15,118,110,0.94),rgba(8,145,178,0.72),rgba(251,146,60,0.62))] p-6 text-white shadow-[0_24px_70px_rgba(15,23,42,0.16)]"
+        >
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold text-blue-700">Không gian học tập</p>
-              <h1 className="mt-1 text-3xl font-bold text-gray-900">Kế hoạch học hôm nay</h1>
-              <p className="mt-2 max-w-2xl text-sm text-gray-600">
+              <p className="text-sm font-semibold text-white/80">Không gian học tập</p>
+              <h1 className="mt-1 text-3xl font-bold text-white">Kế hoạch học hôm nay</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/80">
                 Bắt đầu bằng một cuộc trò chuyện, xem lại lỗi đã ghi nhận, rồi biến điểm yếu thành bài quiz ngắn.
               </p>
             </div>
@@ -96,6 +100,21 @@ export default function Home() {
               <Badge variant="info" size="md">{level}</Badge>
               <Badge size="md">{topicLabel(currentTopic.value)}</Badge>
             </div>
+          </div>
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            {[
+              ["1", "Gia sư AI", "Nói và nhắn trực tiếp"],
+              ["2", "Widget luyện tập", "Bài nghe/nói ngay trong chat"],
+              ["3", "AI review", "Tóm tắt điểm mạnh, điểm yếu"],
+            ].map(([step, title, body]) => (
+              <div key={step} className="rounded-lg border border-white/20 bg-white/12 p-3 backdrop-blur">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-white text-sm font-bold text-primary-800">
+                  {step}
+                </span>
+                <p className="mt-3 text-sm font-semibold">{title}</p>
+                <p className="mt-1 text-xs text-white/70">{body}</p>
+              </div>
+            ))}
           </div>
         </motion.div>
 
@@ -139,7 +158,7 @@ export default function Home() {
                   icon: MessageSquare,
                   action: "Gia sư AI",
                   to: "/practice",
-                  tone: "bg-blue-50 text-blue-700 ring-blue-100",
+                  tone: "bg-primary-50 text-primary-800 ring-primary-100",
                 },
                 {
                   title: "Ôn lại lỗi sai",
@@ -168,7 +187,7 @@ export default function Home() {
                   </div>
                   <h3 className="font-semibold text-gray-900">{item.title}</h3>
                   <p className="mt-2 min-h-10 text-sm text-gray-500">{item.body}</p>
-                  <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-700">
+                  <span className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-800">
                     {item.action}
                     <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
                   </span>
@@ -224,16 +243,16 @@ export default function Home() {
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.7fr_1.3fr]">
           <Card>
             <div className="flex items-center gap-3">
-              <BookOpen className="h-5 w-5 text-blue-700" />
+              <BookOpen className="h-5 w-5 text-primary-800" />
               <div>
                 <h2 className="font-semibold text-gray-900">Trình độ</h2>
                 <p className="text-sm text-gray-500">Admin quản lý để giữ lộ trình học ổn định</p>
               </div>
             </div>
 
-            <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4">
-              <p className="text-3xl font-bold text-blue-800">{authUser?.cefr_level || level}</p>
-              <p className="mt-2 text-sm text-blue-900">
+            <div className="mt-5 rounded-lg border border-primary-200 bg-primary-50 p-4">
+              <p className="text-3xl font-bold text-primary-900">{authUser?.cefr_level || level}</p>
+              <p className="mt-2 text-sm text-primary-950">
                 Học viên chỉ làm các bài quanh trình độ hiện tại. Nếu cần đổi level, admin cập nhật ở màn quản lý người dùng.
               </p>
             </div>
@@ -259,7 +278,7 @@ export default function Home() {
                   onClick={() => setTopic(item.value)}
                   className={`min-h-20 rounded-lg border p-3 text-left transition ${
                     topic === item.value
-                      ? "border-blue-300 bg-blue-50 text-blue-800"
+                      ? "border-primary-300 bg-primary-50 text-primary-900"
                       : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                   }`}
                 >

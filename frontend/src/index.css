@@ -4,11 +4,11 @@
 
 @layer base {
   html {
-    @apply bg-gray-50;
+    @apply bg-[#f6fbf9];
   }
 
   body {
-    @apply min-h-screen bg-gray-50 text-gray-900 antialiased;
+    @apply min-h-screen bg-[#f6fbf9] text-gray-900 antialiased;
   }
 
   * {
@@ -18,11 +18,11 @@
 
 @layer components {
   .glass-card {
-    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+    @apply rounded-lg border border-white/70 bg-white/85 shadow-sm backdrop-blur;
   }
 
   .surface-card {
-    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+    @apply rounded-lg border border-gray-200/80 bg-white shadow-sm;
   }
 
   .field {
@@ -41,18 +41,40 @@
   }
 
   .btn-primary {
-    @apply rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white
-           hover:bg-primary-700 active:bg-primary-800
+    @apply rounded-lg bg-primary-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-primary-900/10
+           hover:bg-primary-800 active:bg-primary-900
            transition disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-secondary {
-    @apply rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700
-           hover:bg-gray-50 active:bg-gray-100
+    @apply rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 shadow-sm
+           hover:border-gray-400 hover:bg-gray-50 active:bg-gray-100
            transition disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-ghost {
     @apply rounded-lg px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 hover:text-gray-900;
+  }
+
+  .app-ambient {
+    background:
+      linear-gradient(135deg, rgba(240, 253, 250, 0.95) 0%, rgba(255, 247, 237, 0.78) 42%, rgba(236, 254, 255, 0.92) 100%);
+  }
+
+  .study-grid {
+    background-image:
+      linear-gradient(rgba(15, 118, 110, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 118, 110, 0.08) 1px, transparent 1px);
+    background-size: 36px 36px;
+  }
+
+  .signal-line {
+    @apply relative overflow-hidden;
+  }
+
+  .signal-line::after {
+    content: "";
+    @apply absolute inset-y-0 left-0 w-1/3 bg-white/50;
+    animation: signal-sweep 4.8s linear infinite;
   }
 }
