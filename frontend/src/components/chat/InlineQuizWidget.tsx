@@ -21,7 +21,7 @@ function isChoiceQuestion(question: InlineQuizQuestion) {
 }
 
 function isFillQuestion(question: InlineQuizQuestion) {
-  return question.question_type === "listening_fill_blank";
+  return question.question_type === "fill_blank" || question.question_type === "listening_fill_blank";
 }
 
 function isSpeakingQuestion(question: InlineQuizQuestion) {

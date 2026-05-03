@@ -29,7 +29,10 @@ from app.agents.english_tutor.chat_widgets import (
 )
 from app.agents.english_tutor.edge_tts_plugin import EdgeTTS
 from app.agents.english_tutor.graph import create_english_tutor_graph
-from app.agents.english_tutor.inline_quiz import build_inline_exercise_set
+from app.agents.english_tutor.inline_quiz import (
+    build_inline_exercise_set,
+    build_inline_exercise_set_from_bank,
+)
 from app.agents.english_tutor.session_metrics import (
     build_stats_payload,
     compute_session_scores,
@@ -448,12 +451,19 @@ async def entrypoint(ctx: JobContext):
             return False
 
         sequence = exercise_widget_count + 1
-        payload = build_inline_exercise_set(
+        payload = await build_inline_exercise_set_from_bank(
             state_values,
             request_text=request_text,
             exercise_mode=exercise_mode,
             sequence=sequence,
         )
+        if not payload:
+            payload = build_inline_exercise_set(
+                state_values,
+                request_text=request_text,
+                exercise_mode=exercise_mode,
+                sequence=sequence,
+            )
         if not payload:
             return False
 

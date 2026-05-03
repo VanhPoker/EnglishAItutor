@@ -7,8 +7,16 @@ from typing import Any
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
+from loguru import logger
+from sqlalchemy import desc, select
 
 from app.agents.english_tutor.models import EnglishTutorState
+from app.database.connection import get_session_factory
+from app.database.models import Quiz
+
+
+CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+BANK_QUERY_LIMIT = 240
 
 
 def _clean(value: Any) -> str:
@@ -36,6 +44,26 @@ def _variant(seed_text: str, sequence: int, modulo: int) -> int:
         return 0
     digest = hashlib.sha1(f"{seed_text}|{sequence}".encode("utf-8")).hexdigest()
     return int(digest[:8], 16) % modulo
+
+
+def _level_distance(level: str, candidate: str) -> int:
+    try:
+        return abs(CEFR_LEVELS.index(level.upper()) - CEFR_LEVELS.index(candidate.upper()))
+    except ValueError:
+        return 99
+
+
+def _candidate_levels(level: str) -> list[str]:
+    normalized = (level or "B1").upper()
+    if normalized not in CEFR_LEVELS:
+        return ["B1", "A2", "B2"]
+    index = CEFR_LEVELS.index(normalized)
+    nearby = [normalized]
+    for offset in (1, 2):
+        for candidate_index in (index - offset, index + offset):
+            if 0 <= candidate_index < len(CEFR_LEVELS):
+                nearby.append(CEFR_LEVELS[candidate_index])
+    return nearby
 
 
 def _question(
@@ -69,6 +97,227 @@ def _question(
     if min_words:
         payload["min_words"] = min_words
     return payload
+
+
+def _inline_question_from_bank(
+    raw: dict[str, Any],
+    *,
+    question_id: str,
+) -> dict[str, Any] | None:
+    question_type = _clean(raw.get("type") or raw.get("question_type") or "multiple_choice")
+    prompt = _clean(raw.get("prompt"))
+    correct_answer = _clean(raw.get("correct_answer"))
+    explanation = _clean(raw.get("explanation"))
+    focus = _clean(raw.get("focus")) or (
+        "listening" if question_type.startswith("listening") else "speaking" if question_type == "speaking_prompt" else "grammar"
+    )
+    if not prompt or not correct_answer:
+        return None
+
+    audio_text = _clean(raw.get("audio_text"))
+    min_words = int(raw.get("min_words") or 0) or None
+
+    if question_type in {"multiple_choice", "listening_choice"}:
+        if question_type == "listening_choice" and not audio_text:
+            return None
+
+        options = [_clean(item) for item in raw.get("options") or [] if _clean(item)]
+        if not options:
+            return None
+        if correct_answer not in options:
+            options = [correct_answer, *[item for item in options if item.lower() != correct_answer.lower()]]
+        options = options[:6]
+        choice_ids = ["a", "b", "c", "d", "e", "f"]
+        choices = [_choice(choice_ids[index], option) for index, option in enumerate(options)]
+        correct_index = options.index(correct_answer) if correct_answer in options else 0
+        return _question(
+            question_id=question_id,
+            prompt=prompt,
+            focus=focus,
+            question_type=question_type,
+            choices=choices,
+            correct_choice_id=choice_ids[correct_index],
+            correct_answer=correct_answer,
+            explanation=explanation or "Chọn phương án đúng nhất dựa trên nội dung bài.",
+            audio_text=audio_text if question_type == "listening_choice" else None,
+        )
+
+    if question_type in {"fill_blank", "listening_fill_blank"}:
+        if question_type == "listening_fill_blank" and not audio_text:
+            return None
+        return _question(
+            question_id=question_id,
+            prompt=prompt,
+            focus=focus,
+            question_type=question_type,
+            choices=[],
+            correct_choice_id="",
+            correct_answer=correct_answer,
+            explanation=explanation or "Điền đúng cụm từ còn thiếu.",
+            audio_text=audio_text if question_type == "listening_fill_blank" else None,
+        )
+
+    if question_type == "speaking_prompt":
+        rubric = _clean(raw.get("rubric")) or correct_answer
+        return _question(
+            question_id=question_id,
+            prompt=prompt,
+            focus=focus,
+            question_type="speaking_prompt",
+            choices=[],
+            correct_choice_id="",
+            correct_answer=rubric,
+            explanation=explanation or "Câu nói tốt cần trả lời đúng yêu cầu, có ý chính và lý do rõ ràng.",
+            min_words=min_words or 10,
+        )
+
+    return None
+
+
+def _take_rotated(items: list[dict[str, Any]], *, sequence: int, seed_text: str, count: int) -> list[dict[str, Any]]:
+    if not items or count <= 0:
+        return []
+    start = _variant(seed_text, sequence, len(items))
+    selected = []
+    seen_prompts = set()
+    for offset in range(len(items)):
+        item = items[(start + offset) % len(items)]
+        prompt_key = _clean(item.get("prompt")).lower()
+        if prompt_key in seen_prompts:
+            continue
+        seen_prompts.add(prompt_key)
+        selected.append(item)
+        if len(selected) >= count:
+            break
+    return selected
+
+
+def _bank_widget_payload(
+    *,
+    mode: str,
+    topic: str,
+    level: str,
+    questions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not questions:
+        return None
+    if mode == "listening":
+        title = "Bài luyện nghe từ ngân hàng câu hỏi"
+        description = "Câu nghe được lấy từ kho quiz CEFR/import trong database, không còn là mẫu cố định trong agent."
+    elif mode == "speaking":
+        title = "Bài luyện nói từ ngân hàng câu hỏi"
+        description = "Prompt nói được lấy từ kho quiz CEFR/import trong database, phù hợp để luyện phản xạ trong chat."
+    elif mode == "grammar":
+        title = "Bài sửa lỗi và mẫu câu"
+        description = "Ôn nhanh lỗi, ngữ pháp và câu nối tiếp từ kho quiz và phiên trò chuyện."
+    else:
+        title = "Bài luyện tổng hợp"
+        description = "Một vòng ngắn từ kho câu hỏi gồm câu chữ, nghe và nói."
+    return {
+        "id": f"inline-exercise-{uuid4()}",
+        "type": "exercise_set",
+        "mode": mode,
+        "title": title,
+        "description": description,
+        "topic": topic,
+        "level": level,
+        "questions": questions[:4],
+    }
+
+
+async def build_inline_exercise_set_from_bank(
+    state: EnglishTutorState,
+    *,
+    request_text: str | None = None,
+    exercise_mode: str = "auto",
+    sequence: int = 0,
+) -> dict[str, Any] | None:
+    """Build an inline widget from the real quiz bank stored in Postgres."""
+    source_text = _last_user_text(state)
+    topic = _topic_display(state)
+    level = _clean(state.get("working_level") or state.get("user_level")) or "B1"
+    selected_mode = exercise_mode
+    if selected_mode == "auto":
+        selected_mode = ("grammar", "listening", "speaking", "mixed")[sequence % 4]
+
+    seed_text = "|".join([topic, level, source_text[:120], request_text or "", str(sequence)])
+    candidate_levels = _candidate_levels(level)
+
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            result = await db.execute(
+                select(Quiz)
+                .where(
+                    Quiz.source != "level_test",
+                    Quiz.level.in_(candidate_levels),
+                )
+                .order_by(desc(Quiz.created_at))
+                .limit(BANK_QUERY_LIMIT)
+            )
+            quizzes = list(result.scalars().all())
+    except Exception as exc:
+        logger.warning(f"Could not load inline exercise bank: {exc}")
+        return None
+
+    quizzes.sort(
+        key=lambda quiz: (
+            0 if (quiz.topic or "") == topic else 1,
+            _level_distance(level, quiz.level or ""),
+            0 if quiz.source in {"open_source", "book", "imported"} else 1,
+            quiz.title or "",
+        )
+    )
+
+    grammar_pool: list[dict[str, Any]] = []
+    listening_pool: list[dict[str, Any]] = []
+    speaking_pool: list[dict[str, Any]] = []
+    for quiz in quizzes:
+        for index, raw_question in enumerate(quiz.questions_json or [], start=1):
+            question_type = _clean(raw_question.get("type") or raw_question.get("question_type"))
+            converted = _inline_question_from_bank(
+                raw_question,
+                question_id=f"bank-{quiz.id}-{index}",
+            )
+            if not converted:
+                continue
+            if question_type.startswith("listening"):
+                listening_pool.append(converted)
+            elif question_type == "speaking_prompt":
+                speaking_pool.append(converted)
+            else:
+                grammar_pool.append(converted)
+
+    if selected_mode == "listening":
+        questions = _take_rotated(listening_pool, sequence=sequence, seed_text=seed_text, count=2)
+    elif selected_mode == "speaking":
+        questions = _take_rotated(speaking_pool, sequence=sequence, seed_text=seed_text, count=2)
+    elif selected_mode == "grammar":
+        questions = _take_rotated(grammar_pool, sequence=sequence, seed_text=seed_text, count=3)
+    else:
+        questions = [
+            *_take_rotated(grammar_pool, sequence=sequence, seed_text=f"{seed_text}|g", count=1),
+            *_take_rotated(listening_pool, sequence=sequence, seed_text=f"{seed_text}|l", count=1),
+            *_take_rotated(speaking_pool, sequence=sequence, seed_text=f"{seed_text}|s", count=1),
+        ]
+
+    minimum = 2 if selected_mode in {"listening", "speaking"} else 1
+    if len(questions) < minimum:
+        logger.info(
+            "Inline bank has insufficient questions for mode {}: grammar={}, listening={}, speaking={}",
+            selected_mode,
+            len(grammar_pool),
+            len(listening_pool),
+            len(speaking_pool),
+        )
+        return None
+
+    return _bank_widget_payload(
+        mode=selected_mode,
+        topic=topic,
+        level=level,
+        questions=questions,
+    )
 
 
 def _error_question(index: int, item: dict[str, Any], source_text: str) -> dict[str, Any] | None:
