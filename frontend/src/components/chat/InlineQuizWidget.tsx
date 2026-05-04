@@ -77,7 +77,7 @@ function widgetModeLabel(mode?: InlineQuizWidgetData["mode"]) {
   if (mode === "listening") return "Bài nghe trong chat";
   if (mode === "speaking") return "Bài nói trong chat";
   if (mode === "mixed") return "Bài tổng hợp trong chat";
-  if (mode === "grammar") return "Bài sửa lỗi trong chat";
+  if (mode === "grammar") return "Quiz trắc nghiệm trong chat";
   return "Bài tập trong chat";
 }
 

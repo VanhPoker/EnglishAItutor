@@ -215,8 +215,8 @@ def _exercise_reply(mode: str) -> str:
     if mode == "speaking":
         return "Sure. I opened a speaking exercise for you."
     if mode == "grammar":
-        return "Sure. I opened a short correction exercise from this session."
-    return "Sure. I opened a short exercise set from what we have practiced."
+        return "Sure. I opened a short multiple-choice quiz for you."
+    return "Sure. I opened a short multiple-choice quiz for you."
 
 
 def _wants_recap(text: str | None) -> bool:

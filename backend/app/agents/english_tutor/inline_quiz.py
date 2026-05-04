@@ -208,8 +208,8 @@ def _bank_widget_payload(
         title = "Bài luyện nói từ ngân hàng câu hỏi"
         description = "Prompt nói được lấy từ kho quiz CEFR/import trong database, phù hợp để luyện phản xạ trong chat."
     elif mode == "grammar":
-        title = "Bài sửa lỗi và mẫu câu"
-        description = "Ôn nhanh lỗi, ngữ pháp và câu nối tiếp từ kho quiz và phiên trò chuyện."
+        title = "Bài quiz trắc nghiệm trong chat"
+        description = "Chọn đáp án đúng từ kho câu hỏi CEFR phù hợp với trình độ hiện tại."
     else:
         title = "Bài luyện tổng hợp"
         description = "Một vòng ngắn từ kho câu hỏi gồm câu chữ, nghe và nói."
@@ -238,7 +238,7 @@ async def build_inline_exercise_set_from_bank(
     level = _clean(state.get("working_level") or state.get("user_level")) or "B1"
     selected_mode = exercise_mode
     if selected_mode == "auto":
-        selected_mode = ("grammar", "listening", "speaking", "mixed")[sequence % 4]
+        selected_mode = "grammar"
 
     seed_text = "|".join([topic, level, source_text[:120], request_text or "", str(sequence)])
     candidate_levels = _candidate_levels(level)
@@ -285,7 +285,7 @@ async def build_inline_exercise_set_from_bank(
                 listening_pool.append(converted)
             elif question_type == "speaking_prompt":
                 speaking_pool.append(converted)
-            else:
+            elif question_type == "multiple_choice":
                 grammar_pool.append(converted)
 
     if selected_mode == "listening":
@@ -743,7 +743,7 @@ def build_inline_exercise_set(
 
     selected_mode = exercise_mode
     if selected_mode == "auto":
-        selected_mode = ("grammar", "listening", "speaking", "mixed")[sequence % 4]
+        selected_mode = "grammar"
 
     if selected_mode == "listening":
         final_questions = [
@@ -761,8 +761,8 @@ def build_inline_exercise_set(
         description = "Nói câu trả lời ngắn, lấy transcript ngay trong widget rồi nhận review nhanh."
     elif selected_mode == "grammar":
         final_questions = unique_questions[:3]
-        title = "Bài sửa lỗi và mẫu câu"
-        description = "Ôn nhanh lỗi, ngữ pháp và câu nối tiếp từ chính phiên trò chuyện."
+        title = "Bài quiz trắc nghiệm trong chat"
+        description = "Chọn đáp án đúng để ôn nhanh ngữ pháp, từ vựng và mẫu câu từ chính phiên trò chuyện."
     else:
         final_questions = [
             unique_questions[0] if unique_questions else _conversation_question(topic, level, source_text, base_variant),
