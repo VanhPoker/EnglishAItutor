@@ -39,3 +39,9 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Word Documents
+*.doc
+*.docx
+~$*.doc*
+docs/
