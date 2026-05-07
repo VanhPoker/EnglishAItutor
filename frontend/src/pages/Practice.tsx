@@ -10,19 +10,19 @@ export default function Practice() {
   const { level, topic } = useUserStore();
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50">
+    <div className="study-grid flex h-screen flex-col bg-[linear-gradient(135deg,#f6fbf9_0%,#fff7ed_48%,#ecfeff_100%)]">
       {/* Compact header */}
-      <header className="border-b border-gray-200 bg-white px-4 py-2.5">
+      <header className="border-b border-white/80 bg-white/85 px-4 py-2.5 shadow-sm backdrop-blur-xl">
         <div className="mx-auto flex max-w-4xl items-center justify-between">
           <div className="flex items-center gap-3">
             <Link
               to="/"
-              className="rounded-lg p-1.5 transition-colors hover:bg-gray-100"
+              className="rounded-lg p-1.5 transition-colors hover:bg-primary-50"
             >
               <ArrowLeft className="w-4 h-4 text-gray-500" />
             </Link>
             <div>
-              <h1 className="text-sm font-semibold text-gray-800">Luyện nói tiếng Anh</h1>
+              <h1 className="text-sm font-semibold text-gray-900">Gia sư AI trực tuyến</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <Badge variant="info" size="sm">{level}</Badge>
                 <Badge size="sm">{topicLabel(topic)}</Badge>
@@ -31,7 +31,7 @@ export default function Practice() {
           </div>
           <Link
             to="/"
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 hover:bg-primary-50 rounded-lg transition-colors"
             title="Đổi thiết lập"
           >
             <Settings className="w-4 h-4 text-gray-400" />

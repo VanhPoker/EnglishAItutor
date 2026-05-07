@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from io import BytesIO
 from html.parser import HTMLParser
 from ipaddress import ip_address
 from collections import Counter
@@ -13,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
@@ -30,11 +31,14 @@ from app.utils.curated_quiz_sets import CURATED_OPEN_QUIZ_SETS
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
-QuestionType = Literal["multiple_choice", "fill_blank"]
-QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source"]
+QuestionType = Literal["multiple_choice", "fill_blank", "listening_choice", "listening_fill_blank", "speaking_prompt"]
+QuizSource = Literal["ai", "manual", "mistakes", "imported", "open_source", "book", "level_test"]
 QuizSourcePreset = Literal["cefr_core", "wikibooks_grammar", "tatoeba_sentences", "thpt_2025_format", "custom_url"]
 CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 MAX_LEARNER_LEVEL_DISTANCE = 2
+LEVEL_UPGRADE_PASS_SCORE = 80
+LEVEL_UPGRADE_QUESTION_COUNT = 12
+LEVEL_UPGRADE_MIN_SKILL_SCORE = 65
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -43,6 +47,9 @@ ALLOWED_IMAGE_TYPES = {
 }
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_TEXT_CHARS = 7000
+MAX_BOOK_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_BOOK_TEXT_CHARS = 9000
+MAX_BOOK_IMPORT_PAGES = 60
 QUIZ_IMAGE_DIR = Path(__file__).resolve().parents[1] / "uploads" / "quiz-images"
 QUIZ_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +94,9 @@ class QuizQuestion(BaseModel):
     explanation: str = ""
     focus: str = "grammar"
     image_url: Optional[str] = None
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = Field(default=8, ge=1, le=80)
 
     @field_validator("options")
     @classmethod
@@ -102,6 +112,14 @@ class QuizQuestion(BaseModel):
         cleaned = value.strip()
         return cleaned or None
 
+    @field_validator("audio_text", "rubric")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
+
 
 class QuizQuestionPublic(BaseModel):
     id: str
@@ -111,6 +129,9 @@ class QuizQuestionPublic(BaseModel):
     explanation: str = ""
     focus: str = "grammar"
     image_url: Optional[str] = None
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = 8
 
 
 class QuizCreateRequest(BaseModel):
@@ -254,6 +275,13 @@ class QuizSourceImportResponse(QuizImportResponse):
     attribution: str
 
 
+class QuizBookImportResponse(QuizImportResponse):
+    source_title: str
+    page_range: str
+    license: str
+    attribution: str
+
+
 class CuratedQuizSyncRequest(BaseModel):
     replace_existing: bool = True
 
@@ -274,11 +302,13 @@ class QuizImageUploadResponse(BaseModel):
 
 class QuestionResult(BaseModel):
     question_id: str
+    question_type: QuestionType = "multiple_choice"
     prompt: str
     focus: str
     user_answer: str
     correct_answer: str
     is_correct: bool
+    score: Optional[int] = None
     explanation: str = ""
     image_url: Optional[str] = None
 
@@ -309,6 +339,39 @@ class LearnerQuizProfile(BaseModel):
     recommendations: list[str] = Field(default_factory=list)
 
 
+class LevelUpgradeStatusResponse(BaseModel):
+    current_level: str
+    target_level: Optional[str] = None
+    available: bool
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
+    question_count: int = LEVEL_UPGRADE_QUESTION_COUNT
+    message: str
+
+
+class LevelUpgradeOutcome(BaseModel):
+    is_level_test: bool = True
+    passed: bool
+    upgraded: bool
+    previous_level: str
+    target_level: str
+    current_level: str
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
+    score: int
+    skill_scores: dict[str, int] = Field(default_factory=dict)
+    blocking_skills: list[str] = Field(default_factory=list)
+    message: str
+
+
+class LevelUpgradeStartResponse(BaseModel):
+    quiz: QuizResponse
+    current_level: str
+    target_level: str
+    pass_threshold: int = LEVEL_UPGRADE_PASS_SCORE
+    minimum_skill_score: int = LEVEL_UPGRADE_MIN_SKILL_SCORE
+
+
 class GeneratedQuizQuestion(BaseModel):
     id: Optional[str] = None
     type: QuestionType = "multiple_choice"
@@ -317,6 +380,16 @@ class GeneratedQuizQuestion(BaseModel):
     correct_answer: str
     explanation: str = ""
     focus: str = "grammar"
+    audio_text: Optional[str] = None
+    rubric: Optional[str] = None
+    min_words: int = 8
+
+
+class SpeakingQuestionEvaluation(BaseModel):
+    score: int = Field(ge=0, le=100)
+    summary: str
+    strengths: list[str] = Field(default_factory=list)
+    improvement_areas: list[str] = Field(default_factory=list)
 
 
 class QuizAttemptResponse(BaseModel):
@@ -329,6 +402,7 @@ class QuizAttemptResponse(BaseModel):
     results: list[QuestionResult]
     ai_review: QuizReview
     learner_profile: LearnerQuizProfile
+    level_upgrade: Optional[LevelUpgradeOutcome] = None
     created_at: datetime
 
 
@@ -353,6 +427,13 @@ def _level_index(level: str | None) -> int:
 
 def _level_distance(left: str | None, right: str | None) -> int:
     return abs(_level_index(left) - _level_index(right))
+
+
+def _next_level(level: str | None) -> str | None:
+    index = _level_index(level)
+    if index >= len(CEFR_LEVELS) - 1:
+        return None
+    return CEFR_LEVELS[index + 1]
 
 
 def _is_level_allowed(user: User, quiz_level: str | None) -> bool:
@@ -385,7 +466,7 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
             continue
 
         options = [item.strip() for item in question.options if item and item.strip()]
-        if question.type == "multiple_choice":
+        if question.type in {"multiple_choice", "listening_choice"}:
             answer_key = correct_answer.strip().upper()
             key_map = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
             if answer_key in key_map and key_map[answer_key] < len(options):
@@ -397,6 +478,13 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
         else:
             options = []
 
+        audio_text = question.audio_text
+        if question.type in {"listening_choice", "listening_fill_blank"} and not audio_text:
+            audio_text = prompt
+        rubric = question.rubric
+        if question.type == "speaking_prompt" and not rubric:
+            rubric = correct_answer
+
         normalized.append(
             QuizQuestion(
                 id=question.id.strip() or f"q{index}",
@@ -407,6 +495,9 @@ def _normalize_questions(questions: list[QuizQuestion]) -> list[QuizQuestion]:
                 explanation=explanation,
                 focus=focus,
                 image_url=question.image_url,
+                audio_text=audio_text,
+                rubric=rubric,
+                min_words=question.min_words,
             )
         )
     return normalized
@@ -422,6 +513,9 @@ def _public_question(question: dict) -> QuizQuestionPublic:
         explanation=data.explanation,
         focus=data.focus,
         image_url=data.image_url,
+        audio_text=data.audio_text,
+        rubric=data.rubric,
+        min_words=data.min_words,
     )
 
 
@@ -982,6 +1076,77 @@ async def _fetch_source_text(url: str | None) -> str:
         return ""
 
 
+def _clean_book_title(file_name: str) -> str:
+    stem = Path(file_name or "Uploaded English book").stem
+    cleaned = re.sub(r"[_-]+", " ", stem).strip()
+    return cleaned or "Uploaded English book"
+
+
+async def _read_limited_upload(file: UploadFile, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="File PDF quá lớn. Giới hạn hiện tại là 100MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _extract_pdf_book_text(
+    data: bytes,
+    *,
+    start_page: int,
+    max_pages: int,
+) -> tuple[str, int, int, int]:
+    try:
+        from pypdf import PdfReader
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Backend chưa cài thư viện đọc PDF.") from exc
+
+    try:
+        reader = PdfReader(BytesIO(data))
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Không đọc được PDF này. File có thể bị mã hoá hoặc lỗi.") from exc
+
+    page_count = len(reader.pages)
+    if page_count <= 0:
+        raise HTTPException(status_code=422, detail="PDF không có trang hợp lệ.")
+
+    start = max(1, start_page)
+    if start > page_count:
+        raise HTTPException(status_code=422, detail=f"PDF chỉ có {page_count} trang, không có trang {start}.")
+
+    page_limit = max(1, min(max_pages, MAX_BOOK_IMPORT_PAGES))
+    end = min(page_count, start + page_limit - 1)
+    chunks: list[str] = []
+    remaining = MAX_BOOK_TEXT_CHARS
+
+    for page_number in range(start, end + 1):
+        try:
+            text = reader.pages[page_number - 1].extract_text() or ""
+        except Exception:
+            text = ""
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        chunks.append(text[:remaining])
+        remaining -= len(chunks[-1])
+        if remaining <= 0:
+            break
+
+    extracted = "\n".join(chunks).strip()
+    if len(extracted) < 500:
+        raise HTTPException(
+            status_code=422,
+            detail="Không trích xuất đủ chữ từ vùng trang đã chọn. Hãy thử vùng trang khác hoặc PDF có text layer.",
+        )
+    return extracted, start, end, page_count
+
+
 def _source_info(req: QuizSourceImportRequest) -> dict:
     if req.preset == "custom_url":
         if not req.source_url:
@@ -1223,6 +1388,106 @@ Return structured data only.
         ) from exc
 
 
+async def _generate_book_quizzes(
+    *,
+    book_title: str,
+    page_range: str,
+    book_text: str,
+    topic: str,
+    level: str,
+    quiz_count: int,
+    questions_per_quiz: int,
+    focus: str | None,
+) -> list[QuizImportItem]:
+    topic_display = topic.replace("_", " ")
+    prompt = f"""
+Create a batch of original English learner quizzes from a user-uploaded grammar/IELTS book excerpt.
+
+Source book: {book_title}
+Pages used: {page_range}
+
+Target:
+- CEFR level: {level}
+- Topic: {topic_display}
+- Focus: {focus or 'grammar accuracy, IELTS-style language use, vocabulary, and sentence structure'}
+- Quiz count: {quiz_count}
+- Questions per quiz: {questions_per_quiz}
+
+Rules:
+- Generate original questions inspired by the grammar points and skills in the excerpt.
+- Do not copy long passages, examples, answer keys, or exercises from the book.
+- Keep any quoted phrase extremely short when needed.
+- Every quiz must contain exactly {questions_per_quiz} questions.
+- Use only multiple_choice and fill_blank.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- Explanations must be in Vietnamese and tell the learner what grammar point to notice.
+- Questions should be useful for Vietnamese learners preparing for IELTS or school English.
+- Do not return generic placeholder questions.
+
+Book excerpt:
+{book_text}
+
+Return structured data only.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.22).with_structured_output(GeneratedQuizBatch)
+        batch: GeneratedQuizBatch = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You create copyright-safe, original English quizzes from limited book excerpts. "
+                        "You never reproduce full copyrighted exercises."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        quizzes: list[QuizImportItem] = []
+        for quiz_index, generated in enumerate(batch.quizzes[:quiz_count], start=1):
+            questions: list[QuizQuestion] = []
+            for question_index, question in enumerate(generated.questions[:questions_per_quiz], start=1):
+                data = question.model_dump()
+                data["id"] = data.get("id") or f"q{question_index}"
+                if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                    data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+                questions.append(QuizQuestion.model_validate(data))
+
+            questions = _normalize_questions(questions)
+            if len(questions) >= questions_per_quiz:
+                quizzes.append(
+                    QuizImportItem(
+                        title=generated.title or f"{book_title} - {level} #{quiz_index}",
+                        topic=topic,
+                        level=level,
+                        description=(
+                            f"{generated.description}\n"
+                            f"Dựa trên chủ điểm từ sách {book_title}, {page_range}. "
+                            "Câu hỏi được AI tạo mới, không sao chép nguyên văn bài tập trong sách."
+                        ),
+                        questions=questions[:questions_per_quiz],
+                    )
+                )
+
+        if len(quizzes) >= quiz_count:
+            return quizzes[:quiz_count]
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Đã đọc PDF nhưng chỉ tạo được {len(quizzes)}/{quiz_count} quiz hợp lệ. "
+                "Hãy giảm số bộ, giảm số câu hoặc chọn vùng trang rõ chữ hơn."
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(f"Book quiz generation failed: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail="AI chưa tạo được quiz hợp lệ từ sách này. Hãy thử vùng trang khác hoặc giảm số bộ cần tạo.",
+        ) from exc
+
+
 async def _generate_quiz(req: QuizGenerateRequest, focus_text: str) -> GeneratedQuiz:
     topic_display = req.topic.replace("_", " ")
     title = req.title or f"{req.level} {topic_display.title()} Quiz"
@@ -1273,6 +1538,234 @@ Return structured data only.
             _fallback_questions(req.topic, req.level, req.question_count, focus_text)
         ),
     )
+
+
+def _fallback_level_upgrade_questions(current_level: str, target_level: str, count: int) -> list[QuizQuestion]:
+    templates = [
+        QuizQuestion(
+            id="q1",
+            type="multiple_choice",
+            prompt=f"Choose the best sentence for a learner ready to move from {current_level} to {target_level}.",
+            options=[
+                "I have been learning English for three years.",
+                "I am learning English since three years.",
+                "I learn English since three years.",
+                "I have learning English for three years.",
+            ],
+            correct_answer="I have been learning English for three years.",
+            explanation="Dùng hiện tại hoàn thành tiếp diễn với 'for' để nói một việc bắt đầu trong quá khứ và vẫn tiếp diễn.",
+            focus="grammar",
+        ),
+        QuizQuestion(
+            id="q2",
+            type="multiple_choice",
+            prompt="Which sentence is the most natural in a polite conversation?",
+            options=[
+                "Would you mind explaining the point again?",
+                "Do you mind to explain the point again?",
+                "Would you mind explain the point again?",
+                "You mind explaining the point again?",
+            ],
+            correct_answer="Would you mind explaining the point again?",
+            explanation="Sau 'Would you mind' dùng V-ing: 'explaining'.",
+            focus="conversation",
+        ),
+        QuizQuestion(
+            id="q3",
+            type="fill_blank",
+            prompt="Complete the sentence: The course was challenging, _____ it helped me speak more confidently.",
+            options=[],
+            correct_answer="but",
+            explanation="'But' nối hai ý tương phản: khó nhưng hữu ích.",
+            focus="structure",
+        ),
+        QuizQuestion(
+            id="q4",
+            type="multiple_choice",
+            prompt="Choose the sentence with the clearest word order.",
+            options=[
+                "I usually review new vocabulary before I go to bed.",
+                "Usually I review before I go to bed new vocabulary.",
+                "I review usually new vocabulary before go to bed.",
+                "Before I go to bed usually review new vocabulary.",
+            ],
+            correct_answer="I usually review new vocabulary before I go to bed.",
+            explanation="Trạng từ tần suất thường đứng trước động từ chính: 'usually review'.",
+            focus="structure",
+        ),
+        QuizQuestion(
+            id="q5",
+            type="multiple_choice",
+            prompt="Read: Linh missed the first bus, so she took a taxi and arrived five minutes early. What is true?",
+            options=[
+                "She still arrived before the expected time.",
+                "She was late because she missed the bus.",
+                "She decided not to go.",
+                "She arrived exactly on time by bus.",
+            ],
+            correct_answer="She still arrived before the expected time.",
+            explanation="'Arrived five minutes early' nghĩa là đến sớm 5 phút.",
+            focus="comprehension",
+        ),
+        QuizQuestion(
+            id="q6",
+            type="multiple_choice",
+            prompt="Choose the best word: The teacher gave us useful _____ on how to improve pronunciation.",
+            options=["feedback", "advices", "informations", "knowledges"],
+            correct_answer="feedback",
+            explanation="'Feedback' là danh từ không đếm được dùng tự nhiên trong ngữ cảnh nhận xét.",
+            focus="vocabulary",
+        ),
+        QuizQuestion(
+            id="q7",
+            type="fill_blank",
+            prompt="Complete the sentence: I am looking forward _____ joining the speaking club.",
+            options=[],
+            correct_answer="to",
+            explanation="Cụm cố định là 'look forward to + V-ing'.",
+            focus="grammar",
+        ),
+        QuizQuestion(
+            id="q8",
+            type="listening_choice",
+            prompt="Listen to the short answer. What is the speaker's main reason for preferring online lessons?",
+            options=[
+                "The speaker can review the recording later.",
+                "The speaker dislikes asking questions.",
+                "The speaker wants shorter lessons.",
+                "The speaker cannot travel to class.",
+            ],
+            correct_answer="The speaker can review the recording later.",
+            explanation="Trong audio, lý do chính là có thể xem lại bản ghi sau buổi học.",
+            focus="listening",
+            audio_text="I prefer online lessons because I can review the recording later. That helps me remember new vocabulary and correct my mistakes.",
+        ),
+        QuizQuestion(
+            id="q9",
+            type="listening_choice",
+            prompt="Listen to the announcement. What should applicants do?",
+            options=[
+                "Send the application before or by Friday noon.",
+                "Start writing the application after Friday noon.",
+                "Submit the application on Saturday morning.",
+                "Wait for another notice before submitting.",
+            ],
+            correct_answer="Send the application before or by Friday noon.",
+            explanation="'By Friday noon' nghĩa là hạn chót là trưa thứ Sáu.",
+            focus="listening",
+            audio_text="Please submit your application by Friday noon. Late applications may not be accepted, so check your documents carefully before sending them.",
+        ),
+        QuizQuestion(
+            id="q10",
+            type="listening_fill_blank",
+            prompt="Listen and complete the missing word: The class was challenging, _____ it helped me speak more confidently.",
+            options=[],
+            correct_answer="but",
+            explanation="'But' nối hai ý tương phản: khó nhưng hữu ích.",
+            focus="listening",
+            audio_text="The class was challenging, but it helped me speak more confidently.",
+        ),
+        QuizQuestion(
+            id="q11",
+            type="speaking_prompt",
+            prompt="Speak for 30-45 seconds: Describe one English learning habit that helps you improve, and explain why.",
+            options=[],
+            correct_answer="A clear spoken answer that describes one habit and gives at least one reason.",
+            explanation="Bài nói cần có thói quen cụ thể, lý do rõ ràng và câu nối tự nhiên.",
+            focus="speaking",
+            rubric="Score fluency, coherence, vocabulary range, grammar accuracy, and whether the learner gives a clear reason.",
+            min_words=18,
+        ),
+        QuizQuestion(
+            id="q12",
+            type="speaking_prompt",
+            prompt="Speak for 30-45 seconds: Give your opinion about studying with an AI tutor. Mention one advantage and one limitation.",
+            options=[],
+            correct_answer="A clear opinion with one advantage, one limitation, and connected sentences.",
+            explanation="Bài nói cần có quan điểm, một điểm tốt, một hạn chế và cách nối ý mạch lạc.",
+            focus="speaking",
+            rubric="Score task response, fluency, lexical resource, grammatical range and accuracy, and pronunciation clarity inferred from transcript quality.",
+            min_words=22,
+        ),
+    ]
+    return templates[:count]
+
+
+async def _generate_level_upgrade_quiz(current_level: str, target_level: str) -> GeneratedQuiz:
+    prompt = f"""
+Create an internal CEFR level-up assessment for an English learning app.
+
+Learner context:
+- Current level: {current_level}
+- Target level to unlock: {target_level}
+- This is an internal learning assessment, not an official certificate.
+
+Question design:
+- Exactly {LEVEL_UPGRADE_QUESTION_COUNT} questions.
+- Use 7 text questions, 3 listening questions, and 2 speaking prompts.
+- Assess target-level readiness across grammar/language use, vocabulary, reading comprehension, listening comprehension, sentence structure, and spoken communication.
+- For listening questions, use type listening_choice or listening_fill_blank and provide audio_text.
+- For speaking prompts, use type speaking_prompt, provide correct_answer as the target response description, rubric, and min_words.
+- Use only multiple_choice, fill_blank, listening_choice, listening_fill_blank, and speaking_prompt.
+- For multiple_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For listening_choice, provide exactly 4 options and one correct_answer that exactly matches one option.
+- For fill_blank, provide no options and a short correct_answer.
+- For listening_fill_blank, provide no options and a short correct_answer.
+- For speaking_prompt, provide no options.
+- Use focus labels like grammar, vocabulary, word_choice, structure, comprehension, conversation, speaking.
+- Explanations must be in Vietnamese and tell the learner what rule or skill the question checks.
+- Distractors should reflect common Vietnamese learner mistakes.
+- Do not copy official exam questions or book exercises.
+- Do not produce generic placeholder questions.
+
+Return structured data only.
+"""
+    title = f"Thi nâng cấp {current_level} lên {target_level}"
+    description = (
+        f"Bài kiểm tra nội bộ theo CEFR để xem bạn đã sẵn sàng chuyển từ {current_level} lên {target_level} chưa. "
+        f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% để nâng cấp trong hệ thống."
+    )
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.18).with_structured_output(GeneratedQuiz)
+        generated: GeneratedQuiz = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You design CEFR-aligned internal diagnostic questions for English learners. "
+                        "You create original assessment items and never copy official exams."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        questions = []
+        for index, question in enumerate(generated.questions[:LEVEL_UPGRADE_QUESTION_COUNT], start=1):
+            data = question.model_dump()
+            data["id"] = data.get("id") or f"q{index}"
+            if data.get("type") == "multiple_choice" and data.get("correct_answer") not in data.get("options", []):
+                data["options"] = [data.get("correct_answer", "")] + data.get("options", [])[:3]
+            questions.append(QuizQuestion.model_validate(data))
+        questions = _normalize_questions(questions)
+        listening_count = sum(1 for item in questions if item.type in {"listening_choice", "listening_fill_blank"})
+        speaking_count = sum(1 for item in questions if item.type == "speaking_prompt")
+        if len(questions) >= LEVEL_UPGRADE_QUESTION_COUNT and listening_count >= 2 and speaking_count >= 2:
+            return GeneratedQuiz(
+                title=generated.title or title,
+                description=generated.description or description,
+                questions=_generated_questions_from_quiz_questions(questions[:LEVEL_UPGRADE_QUESTION_COUNT]),
+            )
+        raise ValueError(
+            f"Generated mix invalid: {len(questions)} valid, {listening_count} listening, {speaking_count} speaking"
+        )
+    except Exception as exc:
+        logger.warning(f"Level-up quiz generation failed, using deterministic fallback: {exc}")
+        return GeneratedQuiz(
+            title=title,
+            description=description,
+            questions=_generated_questions_from_quiz_questions(
+                _fallback_level_upgrade_questions(current_level, target_level, LEVEL_UPGRADE_QUESTION_COUNT)
+            ),
+        )
 
 
 async def _generate_personalized_remedial_quiz(
@@ -1378,31 +1871,127 @@ Return structured data only.
     )
 
 
-def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str]) -> tuple[int, int, list[QuestionResult]]:
+def _fallback_speaking_evaluation(question: QuizQuestion, answer: str) -> SpeakingQuestionEvaluation:
+    words = re.findall(r"[A-Za-z']+", answer or "")
+    word_count = len(words)
+    if word_count == 0:
+        return SpeakingQuestionEvaluation(
+            score=0,
+            summary="Chưa có câu trả lời nói để chấm.",
+            improvement_areas=["Hãy bật micro hoặc nhập transcript câu trả lời trước khi nộp."],
+        )
+
+    connectors = {"because", "so", "but", "however", "although", "first", "also", "for example", "in my opinion"}
+    answer_lower = answer.lower()
+    connector_hits = sum(1 for item in connectors if item in answer_lower)
+    min_words = max(1, question.min_words)
+
+    score = 45
+    if word_count >= min_words:
+        score += 20
+    if word_count >= min_words + 10:
+        score += 10
+    if connector_hits:
+        score += min(15, connector_hits * 5)
+    if re.search(r"\b(i think|in my opinion|for example|because)\b", answer_lower):
+        score += 10
+
+    score = min(score, 88)
+    return SpeakingQuestionEvaluation(
+        score=score,
+        summary=(
+            f"Câu trả lời có khoảng {word_count} từ. "
+            "Fallback heuristic đã chấm dựa trên độ dài, độ rõ ý và từ nối vì AI rubric tạm thời không phản hồi."
+        ),
+        strengths=["Có câu trả lời nói để hệ thống phân tích."],
+        improvement_areas=["Nói dài hơn, thêm ví dụ cụ thể và dùng từ nối rõ hơn để tăng điểm speaking."],
+    )
+
+
+async def _score_speaking_answer(question: QuizQuestion, answer: str, target_level: str) -> SpeakingQuestionEvaluation:
+    cleaned = " ".join((answer or "").split())
+    if not cleaned:
+        return _fallback_speaking_evaluation(question, cleaned)
+
+    prompt = f"""
+Grade this spoken English answer for an internal CEFR level-up test.
+
+Target CEFR level: {target_level}
+Question: {question.prompt}
+Expected task: {question.correct_answer}
+Rubric: {question.rubric or question.correct_answer}
+Minimum words expected: {question.min_words}
+
+Learner transcript:
+{cleaned}
+
+Score 0-100 using:
+- Fluency and coherence
+- Vocabulary range
+- Grammar range and accuracy
+- Task response
+- Pronunciation clarity inferred from transcript quality, repeated fragments, and recognition issues
+
+Return concise Vietnamese feedback.
+"""
+    try:
+        llm = get_model(settings.DEFAULT_MODEL, temperature=0.1).with_structured_output(SpeakingQuestionEvaluation)
+        evaluation: SpeakingQuestionEvaluation = await llm.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "You are a strict but fair CEFR speaking examiner for Vietnamese learners. "
+                        "You grade only the provided transcript and do not over-credit very short answers."
+                    )
+                ),
+                HumanMessage(content=prompt),
+            ]
+        )
+        return evaluation
+    except Exception as exc:
+        logger.warning(f"Speaking evaluation failed, using fallback: {exc}")
+        return _fallback_speaking_evaluation(question, cleaned)
+
+
+async def _score_quiz(questions: list[QuizQuestion], answers: dict[str, str], target_level: str = "B1") -> tuple[int, int, list[QuestionResult]]:
     results = []
     correct_count = 0
+    score_total = 0
 
     for question in questions:
         user_answer = answers.get(question.id, "")
         expected = question.correct_answer
-        is_correct = _normalize_answer(user_answer) == _normalize_answer(expected)
+        explanation = question.explanation
+        if question.type == "speaking_prompt":
+            evaluation = await _score_speaking_answer(question, user_answer, target_level)
+            question_score = max(0, min(100, int(evaluation.score)))
+            is_correct = question_score >= LEVEL_UPGRADE_MIN_SKILL_SCORE
+            feedback_bits = [evaluation.summary, *evaluation.improvement_areas[:2]]
+            explanation = " ".join(item for item in feedback_bits if item).strip() or explanation
+        else:
+            is_correct = _normalize_answer(user_answer) == _normalize_answer(expected)
+            question_score = 100 if is_correct else 0
+
         if is_correct:
             correct_count += 1
+        score_total += question_score
         results.append(
             QuestionResult(
                 question_id=question.id,
+                question_type=question.type,
                 prompt=question.prompt,
                 focus=question.focus,
                 user_answer=user_answer,
                 correct_answer=expected,
                 is_correct=is_correct,
-                explanation=question.explanation,
+                score=question_score,
+                explanation=explanation,
                 image_url=question.image_url,
             )
         )
 
     total = len(questions)
-    score = round((correct_count / total) * 100) if total else 0
+    score = round(score_total / total) if total else 0
     return score, correct_count, results
 
 
@@ -1591,6 +2180,85 @@ def _fallback_review(score: int, results: list[QuestionResult]) -> QuizReview:
     )
 
 
+def _level_upgrade_skill_scores(results: list[QuestionResult]) -> dict[str, int]:
+    grouped: dict[str, list[int]] = {"text": [], "listening": [], "speaking": []}
+    for item in results:
+        item_score = item.score if item.score is not None else (100 if item.is_correct else 0)
+        if item.question_type in {"listening_choice", "listening_fill_blank"} or item.focus == "listening":
+            grouped["listening"].append(item_score)
+        elif item.question_type == "speaking_prompt" or item.focus == "speaking":
+            grouped["speaking"].append(item_score)
+        else:
+            grouped["text"].append(item_score)
+
+    return {skill: round(sum(values) / len(values)) for skill, values in grouped.items() if values}
+
+
+async def _level_upgrade_outcome(
+    db,
+    user: User,
+    quiz: Quiz,
+    score: int,
+    results: list[QuestionResult],
+) -> LevelUpgradeOutcome | None:
+    if quiz.source != "level_test":
+        return None
+
+    db_user = await db.get(User, user.id)
+    previous_level = ((db_user.cefr_level if db_user else user.cefr_level) or "B1").upper()
+    target_level = (quiz.level or "").strip().upper()
+    if target_level not in CEFR_LEVELS:
+        return None
+
+    skill_scores = _level_upgrade_skill_scores(results)
+    blocking_skills = [
+        skill for skill, skill_score in skill_scores.items()
+        if skill in {"listening", "speaking"} and skill_score < LEVEL_UPGRADE_MIN_SKILL_SCORE
+    ]
+    passed = score >= LEVEL_UPGRADE_PASS_SCORE and not blocking_skills
+    upgraded = False
+    current_level = previous_level
+    if passed and db_user and _level_index(target_level) > _level_index(previous_level):
+        db_user.cefr_level = target_level
+        db.add(db_user)
+        upgraded = True
+        current_level = target_level
+
+    if upgraded:
+        message = (
+            f"Đạt {score}% và đủ ngưỡng listening/speaking. "
+            f"Bạn đã được nâng từ {previous_level} lên {target_level} trong hệ thống."
+        )
+    elif passed:
+        message = f"Đạt {score}% và đủ điều kiện cho {target_level}, nhưng level hiện tại không cần cập nhật thêm."
+    elif blocking_skills:
+        labels = {"listening": "nghe", "speaking": "nói"}
+        weak_text = ", ".join(labels.get(item, item) for item in blocking_skills)
+        message = (
+            f"Tổng điểm {score}%, nhưng kỹ năng {weak_text} chưa đạt ngưỡng {LEVEL_UPGRADE_MIN_SKILL_SCORE}%. "
+            f"Chưa thể nâng lên {target_level}; hãy luyện lại phần này rồi thử lại."
+        )
+    else:
+        message = (
+            f"Đạt {score}%. Chưa đủ ngưỡng {LEVEL_UPGRADE_PASS_SCORE}% để nâng lên {target_level}. "
+            "Hãy xem lại nhóm câu sai rồi thử lại sau."
+        )
+
+    return LevelUpgradeOutcome(
+        passed=passed,
+        upgraded=upgraded,
+        previous_level=previous_level,
+        target_level=target_level,
+        current_level=current_level,
+        pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+        minimum_skill_score=LEVEL_UPGRADE_MIN_SKILL_SCORE,
+        score=score,
+        skill_scores=skill_scores,
+        blocking_skills=blocking_skills,
+        message=message,
+    )
+
+
 async def _build_ai_review(
     quiz: Quiz,
     score: int,
@@ -1715,6 +2383,60 @@ async def generate_quiz(req: QuizGenerateRequest, user: User = Depends(get_curre
         await db.commit()
         await db.refresh(quiz)
         return _quiz_response(quiz)
+
+
+@router.get("/level-upgrade/status", response_model=LevelUpgradeStatusResponse)
+async def get_level_upgrade_status(user: User = Depends(require_role("learner"))):
+    current_level = (user.cefr_level or "B1").upper()
+    target_level = _next_level(current_level)
+    if not target_level:
+        return LevelUpgradeStatusResponse(
+            current_level=current_level,
+            target_level=None,
+            available=False,
+            message="Bạn đang ở C2, hiện không còn cấp CEFR cao hơn để nâng trong hệ thống.",
+        )
+    return LevelUpgradeStatusResponse(
+        current_level=current_level,
+        target_level=target_level,
+        available=True,
+        message=(
+            f"Làm bài kiểm tra nội bộ từ {current_level} lên {target_level}. "
+            f"Cần đạt tối thiểu {LEVEL_UPGRADE_PASS_SCORE}% tổng điểm và không dưới "
+            f"{LEVEL_UPGRADE_MIN_SKILL_SCORE}% ở phần nghe/nói."
+        ),
+    )
+
+
+@router.post("/level-upgrade/start", response_model=LevelUpgradeStartResponse)
+async def start_level_upgrade_exam(user: User = Depends(require_role("learner"))):
+    current_level = (user.cefr_level or "B1").upper()
+    target_level = _next_level(current_level)
+    if not target_level:
+        raise HTTPException(status_code=422, detail="Bạn đang ở C2, hiện không còn cấp cao hơn để nâng.")
+
+    generated = await _generate_level_upgrade_quiz(current_level=current_level, target_level=target_level)
+    factory = get_session_factory()
+    async with factory() as db:
+        quiz = Quiz(
+            user_id=user.id,
+            title=generated.title,
+            topic="level_upgrade",
+            level=target_level,
+            source="level_test",
+            description=generated.description,
+            questions_json=[item.model_dump() for item in generated.questions],
+        )
+        db.add(quiz)
+        await db.commit()
+        await db.refresh(quiz)
+        return LevelUpgradeStartResponse(
+            quiz=_quiz_response(quiz),
+            current_level=current_level,
+            target_level=target_level,
+            pass_threshold=LEVEL_UPGRADE_PASS_SCORE,
+            minimum_skill_score=LEVEL_UPGRADE_MIN_SKILL_SCORE,
+        )
 
 
 def _allowed_levels_for_user(user: User) -> list[str]:
@@ -1887,6 +2609,116 @@ async def import_quizzes_from_source(req: QuizSourceImportRequest, user: User = 
         source_url=info.get("url"),
         license=info["license"],
         attribution=info["attribution"],
+    )
+
+
+@router.post("/book-import", response_model=QuizBookImportResponse)
+async def import_quizzes_from_book(
+    file: UploadFile = File(...),
+    topic: str = Form("free_conversation"),
+    level: str = Form("B1"),
+    quiz_count: int = Form(3, ge=1, le=8),
+    questions_per_quiz: int = Form(5, ge=3, le=10),
+    focus: Optional[str] = Form(None),
+    start_page: int = Form(1, ge=1),
+    max_pages: int = Form(25, ge=1, le=MAX_BOOK_IMPORT_PAGES),
+    book_title: Optional[str] = Form(None),
+    user: User = Depends(require_role("admin")),
+):
+    file_name = file.filename or "uploaded.pdf"
+    if not file_name.lower().endswith(".pdf") and file.content_type != "application/pdf":
+        raise HTTPException(status_code=422, detail="Hiện tại chỉ hỗ trợ import sách dạng PDF.")
+
+    normalized_level = level.strip().upper()
+    if normalized_level not in CEFR_LEVELS:
+        raise HTTPException(status_code=422, detail="Trình độ phải thuộc A1, A2, B1, B2, C1 hoặc C2.")
+
+    source_title = (book_title or "").strip() or _clean_book_title(file_name)
+    data = await _read_limited_upload(file, MAX_BOOK_UPLOAD_BYTES)
+    book_text, page_start, page_end, page_count = _extract_pdf_book_text(
+        data,
+        start_page=start_page,
+        max_pages=max_pages,
+    )
+    page_range = f"trang {page_start}-{page_end}/{page_count}"
+    generated_items = await _generate_book_quizzes(
+        book_title=source_title,
+        page_range=page_range,
+        book_text=book_text,
+        topic=topic,
+        level=normalized_level,
+        quiz_count=quiz_count,
+        questions_per_quiz=questions_per_quiz,
+        focus=focus,
+    )
+
+    license_note = "User-uploaded book excerpt; verify reuse rights before public publishing."
+    attribution = source_title
+    source_note = (
+        f"Nguồn: {attribution}. Vùng đọc: {page_range}. "
+        "Câu hỏi do AI tạo mới, không sao chép nguyên văn bài tập trong sách."
+    )
+    imported: list[Quiz] = []
+    total_questions = 0
+    for item in generated_items[:quiz_count]:
+        questions = _normalize_questions(item.questions)[:questions_per_quiz]
+        if len(questions) < 3:
+            continue
+        total_questions += len(questions)
+        description = (item.description or "").strip()
+        if source_note not in description:
+            description = f"{description}\n{source_note}".strip()
+        imported.append(
+            Quiz(
+                user_id=user.id,
+                title=item.title.strip() or f"{source_title} - {normalized_level}",
+                topic=item.topic or topic,
+                level=item.level or normalized_level,
+                source="book",
+                description=description,
+                questions_json=[question.model_dump() for question in questions],
+            )
+        )
+
+    if not imported:
+        raise HTTPException(status_code=422, detail="Không tạo được quiz hợp lệ từ PDF này.")
+
+    factory = get_session_factory()
+    async with factory() as db:
+        quiz_set = QuizSet(
+            created_by=user.id,
+            title=f"{source_title} - {normalized_level}",
+            description=(
+                f"Bộ quiz tạo từ {source_title}, {page_range}. "
+                "Nội dung câu hỏi được tạo mới theo chủ điểm trong sách."
+            ),
+            source="book",
+            source_preset="book_pdf",
+            source_title=source_title,
+            source_url=None,
+            license=license_note,
+            attribution=attribution,
+            topic=topic,
+            level=normalized_level,
+        )
+        db.add(quiz_set)
+        for quiz in imported:
+            quiz.quiz_set = quiz_set
+            db.add(quiz)
+        await db.commit()
+        await db.refresh(quiz_set)
+        for quiz in imported:
+            await db.refresh(quiz)
+
+    items = [_quiz_list_item(quiz, user) for quiz in imported]
+    return QuizBookImportResponse(
+        imported_count=len(items),
+        question_count=total_questions,
+        quizzes=items,
+        source_title=source_title,
+        page_range=page_range,
+        license=license_note,
+        attribution=attribution,
     )
 
 
@@ -2140,7 +2972,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
         _assert_level_allowed(user, quiz.level)
 
         questions = [QuizQuestion.model_validate(item) for item in quiz.questions_json or []]
-        score, correct_count, question_results = _score_quiz(questions, req.answers)
+        score, correct_count, question_results = await _score_quiz(questions, req.answers, target_level=quiz.level)
         learner_profile = await _build_learner_profile(
             db,
             user.id,
@@ -2151,13 +2983,17 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             },
         )
         review = await _build_ai_review(quiz, score, question_results, learner_profile)
+        level_upgrade = await _level_upgrade_outcome(db, user, quiz, score, question_results)
+        review_payload = review.model_dump()
+        if level_upgrade:
+            review_payload["_level_upgrade"] = level_upgrade.model_dump()
 
         attempt = QuizAttempt(
             quiz_id=quiz.id,
             user_id=user.id,
             answers_json=req.answers,
             result_json=[item.model_dump() for item in question_results],
-            ai_review_json=review.model_dump(),
+            ai_review_json=review_payload,
             score=score,
             correct_count=correct_count,
             total_questions=len(questions),
@@ -2176,6 +3012,7 @@ async def submit_quiz(quiz_id: str, req: QuizAnswerSubmit, user: User = Depends(
             results=question_results,
             ai_review=review,
             learner_profile=learner_profile,
+            level_upgrade=level_upgrade,
             created_at=attempt.created_at,
         )
 
@@ -2194,6 +3031,11 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(require_role("l
             raise HTTPException(status_code=404, detail="Quiz attempt not found")
         attempt, quiz = row
         learner_profile = await _build_learner_profile(db, user.id)
+        raw_review = attempt.ai_review_json or {}
+        level_upgrade = None
+        if isinstance(raw_review, dict) and raw_review.get("_level_upgrade"):
+            level_upgrade = LevelUpgradeOutcome.model_validate(raw_review["_level_upgrade"])
+        review_payload = {key: value for key, value in raw_review.items() if key != "_level_upgrade"}
         return QuizAttemptResponse(
             id=attempt.id,
             quiz_id=quiz.id,
@@ -2202,7 +3044,8 @@ async def get_quiz_attempt(attempt_id: str, user: User = Depends(require_role("l
             correct_count=attempt.correct_count,
             total_questions=attempt.total_questions,
             results=[QuestionResult.model_validate(item) for item in attempt.result_json or []],
-            ai_review=QuizReview.model_validate(attempt.ai_review_json or {}),
+            ai_review=QuizReview.model_validate(review_payload),
             learner_profile=learner_profile,
+            level_upgrade=level_upgrade,
             created_at=attempt.created_at,
         )

@@ -287,7 +287,12 @@ export async function getDashboard(): Promise<DashboardStats> {
 
 // ── Quiz API ────────────────────────────────────────────────────
 
-export type QuizQuestionType = "multiple_choice" | "fill_blank";
+export type QuizQuestionType =
+  | "multiple_choice"
+  | "fill_blank"
+  | "listening_choice"
+  | "listening_fill_blank"
+  | "speaking_prompt";
 
 export interface QuizQuestion {
   id: string;
@@ -297,6 +302,9 @@ export interface QuizQuestion {
   explanation: string;
   focus: string;
   image_url?: string | null;
+  audio_text?: string | null;
+  rubric?: string | null;
+  min_words?: number;
 }
 
 export interface QuizResponse {
@@ -388,12 +396,19 @@ export interface QuizSourceImportResponse extends QuizImportResponse {
   attribution: string;
 }
 
+export interface QuizBookImportResponse extends QuizImportResponse {
+  source_title: string;
+  page_range: string;
+  license: string;
+  attribution: string;
+}
+
 export interface QuizSetInfo {
   id: string;
   title: string;
   description?: string | null;
   source: string;
-  source_preset?: QuizSourcePreset | null;
+  source_preset?: QuizSourcePreset | string | null;
   source_title?: string | null;
   source_url?: string | null;
   license?: string | null;
@@ -441,11 +456,13 @@ export interface QuizImageUploadResponse {
 
 export interface QuestionResult {
   question_id: string;
+  question_type: QuizQuestionType;
   prompt: string;
   focus: string;
   user_answer: string;
   correct_answer: string;
   is_correct: boolean;
+  score?: number | null;
   explanation: string;
   image_url?: string | null;
 }
@@ -476,6 +493,31 @@ export interface LearnerQuizProfile {
   recommendations: string[];
 }
 
+export interface LevelUpgradeStatus {
+  current_level: string;
+  target_level: string | null;
+  available: boolean;
+  pass_threshold: number;
+  minimum_skill_score: number;
+  question_count: number;
+  message: string;
+}
+
+export interface LevelUpgradeOutcome {
+  is_level_test: boolean;
+  passed: boolean;
+  upgraded: boolean;
+  previous_level: string;
+  target_level: string;
+  current_level: string;
+  pass_threshold: number;
+  minimum_skill_score: number;
+  score: number;
+  skill_scores: Record<string, number>;
+  blocking_skills: string[];
+  message: string;
+}
+
 export interface QuizAttemptResponse {
   id: string;
   quiz_id: string;
@@ -486,7 +528,16 @@ export interface QuizAttemptResponse {
   results: QuestionResult[];
   ai_review: QuizReview;
   learner_profile: LearnerQuizProfile;
+  level_upgrade?: LevelUpgradeOutcome | null;
   created_at: string;
+}
+
+export interface LevelUpgradeStartResponse {
+  quiz: QuizResponse;
+  current_level: string;
+  target_level: string;
+  pass_threshold: number;
+  minimum_skill_score: number;
 }
 
 export async function getQuizzes(): Promise<QuizListItem[]> {
@@ -526,6 +577,17 @@ export async function generateQuiz(data: QuizGenerateRequest): Promise<QuizRespo
   });
 }
 
+export async function getLevelUpgradeStatus(): Promise<LevelUpgradeStatus> {
+  return apiFetch<LevelUpgradeStatus>(`${API_BASE}/quizzes/level-upgrade/status`);
+}
+
+export async function startLevelUpgradeExam(): Promise<LevelUpgradeStartResponse> {
+  return apiFetch<LevelUpgradeStartResponse>(`${API_BASE}/quizzes/level-upgrade/start`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export async function importQuizzes(quizzes: QuizImportItem[]): Promise<QuizImportResponse> {
   return apiFetch<QuizImportResponse>(`${API_BASE}/quizzes/import`, {
     method: "POST",
@@ -539,6 +601,34 @@ export async function importQuizzesFromSource(
   return apiFetch<QuizSourceImportResponse>(`${API_BASE}/quizzes/source-import`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function importQuizzesFromBook(data: {
+  file: File;
+  topic: string;
+  level: string;
+  quiz_count: number;
+  questions_per_quiz: number;
+  focus?: string;
+  start_page: number;
+  max_pages: number;
+  book_title?: string;
+}): Promise<QuizBookImportResponse> {
+  const formData = new FormData();
+  formData.append("file", data.file);
+  formData.append("topic", data.topic);
+  formData.append("level", data.level);
+  formData.append("quiz_count", String(data.quiz_count));
+  formData.append("questions_per_quiz", String(data.questions_per_quiz));
+  formData.append("start_page", String(data.start_page));
+  formData.append("max_pages", String(data.max_pages));
+  if (data.focus?.trim()) formData.append("focus", data.focus.trim());
+  if (data.book_title?.trim()) formData.append("book_title", data.book_title.trim());
+
+  return apiFetch<QuizBookImportResponse>(`${API_BASE}/quizzes/book-import`, {
+    method: "POST",
+    body: formData,
   });
 }
 

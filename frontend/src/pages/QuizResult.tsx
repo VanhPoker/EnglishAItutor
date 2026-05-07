@@ -14,8 +14,9 @@ import {
 import Layout from "../components/ui/Layout";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
-import { generateQuiz, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
-import { focusLabel } from "../lib/labels";
+import { generateQuiz, getMe, getQuizAttempt, type QuizAttemptResponse } from "../lib/api";
+import { focusLabel, questionTypeLabel } from "../lib/labels";
+import { useAuthStore } from "../stores/authStore";
 import { useUserStore } from "../stores/userStore";
 
 function scoreTone(score: number) {
@@ -65,10 +66,19 @@ function trendTone(trend: QuizAttemptResponse["learner_profile"]["recent_trend"]
   };
 }
 
+function skillLabel(skill: string) {
+  return {
+    text: "Quiz chữ",
+    listening: "Nghe",
+    speaking: "Nói",
+  }[skill] || skill;
+}
+
 export default function QuizResult() {
   const navigate = useNavigate();
   const { attemptId } = useParams();
-  const { topic, level } = useUserStore();
+  const { topic, level, setLevel } = useUserStore();
+  const updateAuthUser = useAuthStore((s) => s.updateUser);
   const [attempt, setAttempt] = useState<QuizAttemptResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,10 +88,19 @@ export default function QuizResult() {
   useEffect(() => {
     if (!attemptId) return;
     getQuizAttempt(attemptId)
-      .then(setAttempt)
+      .then((data) => {
+        setAttempt(data);
+        if (data.level_upgrade?.upgraded) {
+          setLevel(data.level_upgrade.current_level);
+          updateAuthUser({ cefr_level: data.level_upgrade.current_level });
+          getMe()
+            .then((user) => updateAuthUser(user))
+            .catch(() => undefined);
+        }
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Không tải được kết quả"))
       .finally(() => setLoading(false));
-  }, [attemptId]);
+  }, [attemptId, setLevel, updateAuthUser]);
 
   const wrongResults = useMemo(() => {
     return attempt?.results.filter((item) => !item.is_correct) || [];
@@ -181,6 +200,67 @@ export default function QuizResult() {
           <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             {actionMessage}
           </div>
+        )}
+
+        {attempt.level_upgrade && (
+          <Card
+            className={`mb-6 ${
+              attempt.level_upgrade.passed ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-lg bg-white ring-1 ${
+                    attempt.level_upgrade.passed
+                      ? "text-green-700 ring-green-200"
+                      : "text-amber-700 ring-amber-200"
+                  }`}
+                >
+                  {attempt.level_upgrade.passed ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : (
+                    <Target className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-semibold text-gray-900">Kết quả thi nâng cấp</h2>
+                    <Badge variant={attempt.level_upgrade.passed ? "success" : "warning"}>
+                      {attempt.level_upgrade.previous_level} → {attempt.level_upgrade.target_level}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-gray-700">{attempt.level_upgrade.message}</p>
+                  {Object.keys(attempt.level_upgrade.skill_scores || {}).length > 0 && (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      {Object.entries(attempt.level_upgrade.skill_scores).map(([skill, value]) => (
+                        <div key={skill} className="rounded-lg border border-white/70 bg-white/70 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold uppercase text-gray-500">{skillLabel(skill)}</span>
+                            <span className="text-sm font-bold text-gray-900">{value}%</span>
+                          </div>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                            <div
+                              className={`h-full ${value >= attempt.level_upgrade!.minimum_skill_score ? "bg-green-500" : "bg-amber-500"}`}
+                              style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">
+                    Ngưỡng nâng cấp nội bộ: tổng {attempt.level_upgrade.pass_threshold}%, nghe/nói tối thiểu{" "}
+                    {attempt.level_upgrade.minimum_skill_score}%. Admin vẫn có thể điều chỉnh level nếu cần.
+                  </p>
+                </div>
+              </div>
+              <Link to="/quizzes" className="btn-secondary inline-flex items-center justify-center gap-2">
+                Về kho quiz
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </Card>
         )}
 
         <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
@@ -370,6 +450,8 @@ export default function QuizResult() {
                             {item.is_correct ? "Đúng" : "Cần ôn"}
                           </Badge>
                           <Badge>{focusLabel(item.focus)}</Badge>
+                          <Badge variant="info">{questionTypeLabel(item.question_type)}</Badge>
+                          {item.score != null && <Badge variant={item.score >= 65 ? "success" : "warning"}>{item.score}%</Badge>}
                         </div>
                         {item.image_url && (
                           <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">

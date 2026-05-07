@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.utils.curated_skill_bank import CURATED_SKILL_BANK_SETS
+
 
 def mc(
     question_id: str,
@@ -569,4 +571,4 @@ CURATED_OPEN_QUIZ_SETS = [
             },
         ],
     },
-]
+] + CURATED_SKILL_BANK_SETS

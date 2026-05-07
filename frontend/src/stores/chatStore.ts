@@ -18,7 +18,10 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  kind?: "text" | "quiz_widget" | "chat_widget";
   corrections?: CorrectionItem[];
+  quizWidget?: InlineQuizWidget;
+  chatWidget?: ChatWidget;
 }
 
 export interface CorrectionItem {
@@ -28,20 +31,139 @@ export interface CorrectionItem {
   explanation: string;
 }
 
+export interface InlineQuizChoice {
+  id: string;
+  text: string;
+}
+
+export interface InlineQuizQuestion {
+  id: string;
+  prompt: string;
+  focus: string;
+  question_type: "multiple_choice" | "fill_blank" | "listening_choice" | "listening_fill_blank" | "speaking_prompt";
+  choices: InlineQuizChoice[];
+  correct_choice_id?: string;
+  correct_answer?: string;
+  explanation: string;
+  source_text?: string;
+  audio_text?: string;
+  min_words?: number;
+}
+
+export interface InlineQuizWidget {
+  id: string;
+  type?: "exercise_set";
+  mode?: "auto" | "grammar" | "listening" | "speaking" | "mixed";
+  title: string;
+  description?: string;
+  topic?: string;
+  level?: string;
+  questions: InlineQuizQuestion[];
+  answers?: Record<string, string>;
+  submitted?: boolean;
+
+  // Legacy single-question payload support for old agent containers.
+  prompt?: string;
+  focus?: string;
+  question_type?: "multiple_choice" | "fill_blank" | "listening_choice" | "listening_fill_blank" | "speaking_prompt";
+  choices?: InlineQuizChoice[];
+  correct_choice_id?: string;
+  correct_answer?: string;
+  explanation?: string;
+  source_text?: string;
+  audio_text?: string;
+  min_words?: number;
+}
+
+export type ChatWidgetType = "paywall" | "session_recap" | "mistake_notebook";
+
+export interface ChatWidgetAction {
+  label: string;
+  to?: string;
+  variant?: "primary" | "secondary";
+}
+
+export interface ChatWidgetMetric {
+  label: string;
+  value: string;
+  tone?: "neutral" | "good" | "warning";
+}
+
+export interface ChatWidgetMistake {
+  error_type: string;
+  original: string;
+  correction: string;
+  explanation?: string;
+  count?: number;
+}
+
+export interface ChatWidget {
+  id: string;
+  type: ChatWidgetType;
+  title: string;
+  description?: string;
+  badge?: string;
+  locked?: boolean;
+  metrics?: ChatWidgetMetric[];
+  highlights?: string[];
+  mistakes?: ChatWidgetMistake[];
+  actions?: ChatWidgetAction[];
+}
+
 interface ChatState {
   messages: ChatMessage[];
   isConnected: boolean;
   isAgentSpeaking: boolean;
   isUserSpeaking: boolean;
+  agentReady: boolean;
   currentTranscript: string;
+  interactionLocked: boolean;
+  lockReason: string | null;
 
   addMessage: (msg: Omit<ChatMessage, "id" | "timestamp">) => void;
   updateLastAssistantMessage: (content: string) => void;
   setConnected: (val: boolean) => void;
   setAgentSpeaking: (val: boolean) => void;
   setUserSpeaking: (val: boolean) => void;
+  setAgentReady: (val: boolean) => void;
   setCurrentTranscript: (val: string) => void;
+  setInteractionLocked: (locked: boolean, reason?: string | null) => void;
+  addQuizWidget: (widget: InlineQuizWidget) => void;
+  addChatWidget: (widget: ChatWidget) => void;
+  answerQuizWidget: (widgetId: string, questionId: string, choiceId: string) => void;
+  submitQuizWidget: (widgetId: string) => void;
   clearMessages: () => void;
+}
+
+function normalizeQuizWidget(widget: InlineQuizWidget): InlineQuizWidget {
+  if (widget.questions?.length) {
+    return { ...widget, answers: widget.answers ?? {} };
+  }
+
+  if (widget.prompt && widget.choices?.length && widget.correct_choice_id) {
+    return {
+      id: widget.id,
+      type: "exercise_set",
+      title: widget.title || "Bộ bài tập nhanh trong phiên",
+      description: "Làm nhanh câu hỏi vừa được tạo trong phiên luyện nói.",
+      questions: [
+        {
+          id: "q-legacy",
+          prompt: widget.prompt,
+          focus: widget.focus || "grammar",
+          question_type: "multiple_choice",
+          choices: widget.choices,
+          correct_choice_id: widget.correct_choice_id,
+          explanation: widget.explanation || "Đây là đáp án tự nhiên hơn trong ngữ cảnh vừa luyện.",
+          source_text: widget.source_text,
+        },
+      ],
+      answers: {},
+      submitted: widget.submitted,
+    };
+  }
+
+  return { ...widget, questions: [], answers: widget.answers ?? {} };
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -49,7 +171,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isConnected: false,
   isAgentSpeaking: false,
   isUserSpeaking: false,
+  agentReady: false,
   currentTranscript: "",
+  interactionLocked: false,
+  lockReason: null,
 
   addMessage: (msg) =>
     set((s) => ({
@@ -93,9 +218,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages: msgs };
     }),
 
-  setConnected: (val) => set({ isConnected: val }),
+  setConnected: (val) => set({ isConnected: val, agentReady: val ? get().agentReady : false }),
   setAgentSpeaking: (val) => set({ isAgentSpeaking: val }),
   setUserSpeaking: (val) => set({ isUserSpeaking: val }),
+  setAgentReady: (val) => set({ agentReady: val }),
   setCurrentTranscript: (val) => set({ currentTranscript: val }),
-  clearMessages: () => set({ messages: [] }),
+  setInteractionLocked: (locked, reason = null) =>
+    set({
+      interactionLocked: locked,
+      lockReason: locked ? reason : null,
+    }),
+  addQuizWidget: (widget) =>
+    set((state) => {
+      const normalizedWidget = normalizeQuizWidget(widget);
+      if (!normalizedWidget.questions.length) return state;
+
+      const existing = state.messages.find(
+        (message) => message.kind === "quiz_widget" && message.quizWidget?.id === normalizedWidget.id
+      );
+      if (existing) return state;
+
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            kind: "quiz_widget",
+            timestamp: Date.now(),
+            quizWidget: normalizedWidget,
+          },
+        ],
+      };
+    }),
+  addChatWidget: (widget) =>
+    set((state) => {
+      const existing = state.messages.find(
+        (message) => message.kind === "chat_widget" && message.chatWidget?.id === widget.id
+      );
+      if (existing) return state;
+
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "",
+            kind: "chat_widget",
+            timestamp: Date.now(),
+            chatWidget: widget,
+          },
+        ],
+      };
+    }),
+  answerQuizWidget: (widgetId, questionId, choiceId) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.kind !== "quiz_widget" || message.quizWidget?.id !== widgetId) {
+          return message;
+        }
+
+        const answers = message.quizWidget.answers ?? {};
+        return {
+          ...message,
+          quizWidget: {
+            ...message.quizWidget,
+            answers: {
+              ...answers,
+              [questionId]: choiceId,
+            },
+          },
+        };
+      }),
+    })),
+  submitQuizWidget: (widgetId) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.kind !== "quiz_widget" || message.quizWidget?.id !== widgetId) {
+          return message;
+        }
+
+        return {
+          ...message,
+          quizWidget: {
+            ...message.quizWidget,
+            submitted: true,
+          },
+        };
+      }),
+    })),
+  clearMessages: () =>
+    set({ messages: [], agentReady: false, interactionLocked: false, lockReason: null }),
 }));

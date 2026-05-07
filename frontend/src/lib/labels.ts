@@ -7,6 +7,7 @@ const topicLabels: Record<string, string> = {
   movies_books: "Phim và sách",
   technology: "Công nghệ",
   health_fitness: "Sức khoẻ",
+  level_upgrade: "Thi nâng cấp",
 };
 
 const focusLabels: Record<string, string> = {
@@ -17,6 +18,7 @@ const focusLabels: Record<string, string> = {
   fluency: "Độ trôi chảy",
   structure: "Cấu trúc câu",
   comprehension: "Đọc hiểu",
+  conversation: "Hội thoại",
   speaking: "Nói",
   listening: "Nghe",
 };
@@ -28,6 +30,8 @@ const sourceLabels: Record<string, string> = {
   manual: "Tự tạo",
   imported: "Import file",
   open_source: "Nguồn mở",
+  book: "Từ sách/PDF",
+  level_test: "Thi nâng cấp",
 };
 
 const roleLabels: Record<string, string> = {
@@ -44,6 +48,9 @@ const subscriptionLabels: Record<string, string> = {
 const questionTypeLabels: Record<string, string> = {
   multiple_choice: "Trắc nghiệm",
   fill_blank: "Điền từ",
+  listening_choice: "Nghe chọn đáp án",
+  listening_fill_blank: "Nghe điền từ",
+  speaking_prompt: "Nói",
 };
 
 function humanize(value: string) {

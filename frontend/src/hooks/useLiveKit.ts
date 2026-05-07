@@ -9,10 +9,15 @@ import {
   ConnectionState,
 } from "livekit-client";
 import { getToken, type TokenRequest } from "../lib/api";
-import { useChatStore } from "../stores/chatStore";
+import { useChatStore, type ChatWidget, type InlineQuizWidget } from "../stores/chatStore";
 
 const CHAT_TOPIC = "ai-text-stream";
+const QUIZ_WIDGET_TOPIC = "ai-quiz-widget";
+const CHAT_WIDGET_TOPIC = "ai-chat-widget";
 const SECURE_LIVEKIT_URL = "wss://livekit.4.145.98.216.sslip.io";
+const DEFAULT_TURN_HOST = "4.145.98.216";
+const DEFAULT_TURN_USERNAME = "turnuser";
+const DEFAULT_TURN_CREDENTIAL = "turnpass";
 type ChatRole = "user" | "assistant";
 type TranscriptBuffer = { texts: string[]; ids: Set<string> };
 
@@ -65,20 +70,61 @@ function combineTranscriptParts(parts: string[]) {
   return combined.join(" ").replace(/\s+/g, " ").trim();
 }
 
+function isLoopbackHost(hostname: string) {
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
 function getLiveKitUrl() {
-  if (import.meta.env.VITE_LIVEKIT_URL) {
-    return import.meta.env.VITE_LIVEKIT_URL;
+  const configuredUrl = import.meta.env.VITE_LIVEKIT_URL?.trim();
+  if (configuredUrl) {
+    const isLoopbackUrl =
+      configuredUrl.includes("://localhost") ||
+      configuredUrl.includes("://127.0.0.1");
+
+    if (!(window.location.protocol === "https:" && isLoopbackUrl)) {
+      return configuredUrl;
+    }
   }
 
   if (window.location.protocol === "https:") {
     return SECURE_LIVEKIT_URL;
   }
 
-  if (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") {
+  if (isLoopbackHost(window.location.hostname)) {
     return "ws://127.0.0.1:7880";
   }
 
   return `ws://${window.location.hostname}:7880`;
+}
+
+function getRtcConfig(): RTCConfiguration {
+  const configuredTurnHost = import.meta.env.VITE_TURN_HOST?.trim();
+  const useLocalForwardedTurn =
+    !configuredTurnHost && isLoopbackHost(window.location.hostname);
+  const turnHost =
+    configuredTurnHost || (useLocalForwardedTurn ? "127.0.0.1" : DEFAULT_TURN_HOST);
+  const turnUsername =
+    import.meta.env.VITE_TURN_USERNAME?.trim() || DEFAULT_TURN_USERNAME;
+  const turnCredential =
+    import.meta.env.VITE_TURN_CREDENTIAL?.trim() || DEFAULT_TURN_CREDENTIAL;
+  const forceRelay = import.meta.env.VITE_FORCE_TURN_RELAY === "true";
+  const turnUrls = useLocalForwardedTurn
+    ? [`turn:${turnHost}:3478?transport=tcp`]
+    : [
+        `turn:${turnHost}:3478?transport=udp`,
+        `turn:${turnHost}:3478?transport=tcp`,
+      ];
+
+  return {
+    iceTransportPolicy: forceRelay ? "relay" : "all",
+    iceServers: [
+      {
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      },
+    ],
+  };
 }
 
 export function useLiveKit() {
@@ -93,7 +139,7 @@ export function useLiveKit() {
   );
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const { addMessage, setConnected, setCurrentTranscript } = useChatStore();
+  const { addMessage, addQuizWidget, addChatWidget, setConnected, setAgentReady, setCurrentTranscript } = useChatStore();
 
   const connect = useCallback(
     async (req: TokenRequest) => {
@@ -107,6 +153,7 @@ export function useLiveKit() {
         if (timer) window.clearTimeout(timer);
       });
       transcriptTimersRef.current = {};
+      setAgentReady(false);
       setCurrentTranscript("");
 
       const room = new Room({
@@ -244,6 +291,9 @@ export function useLiveKit() {
 
           if (segment.final) {
             setCurrentTranscript("");
+            if (role === "assistant") {
+              setAgentReady(true);
+            }
             queueTranscriptMessage(role, text, segment.id);
           } else {
             setCurrentTranscript(`${label}: ${text}`);
@@ -266,10 +316,63 @@ export function useLiveKit() {
         }
       });
 
-      await room.connect(getLiveKitUrl(), token);
+      room.registerTextStreamHandler(QUIZ_WIDGET_TOPIC, async (reader) => {
+        try {
+          const textStream = reader as any;
+          const raw =
+            typeof textStream.readAll === "function"
+              ? await textStream.readAll()
+              : await (async () => {
+                  let merged = "";
+                  if (typeof textStream[Symbol.asyncIterator] === "function") {
+                    for await (const chunk of textStream) {
+                      merged += String(chunk ?? "");
+                    }
+                  }
+                  return merged;
+                })();
+
+          const payload = JSON.parse(raw || "{}") as InlineQuizWidget;
+          const hasExerciseQuestions = Array.isArray(payload?.questions) && payload.questions.length > 0;
+          const hasLegacyQuestion = Array.isArray(payload?.choices) && payload.choices.length > 0;
+          if (!payload?.id || (!hasExerciseQuestions && !hasLegacyQuestion)) return;
+          addQuizWidget(payload);
+        } catch (error) {
+          console.error("Failed to read quiz widget stream:", error);
+        }
+      });
+
+      room.registerTextStreamHandler(CHAT_WIDGET_TOPIC, async (reader) => {
+        try {
+          const textStream = reader as any;
+          const raw =
+            typeof textStream.readAll === "function"
+              ? await textStream.readAll()
+              : await (async () => {
+                  let merged = "";
+                  if (typeof textStream[Symbol.asyncIterator] === "function") {
+                    for await (const chunk of textStream) {
+                      merged += String(chunk ?? "");
+                    }
+                  }
+                  return merged;
+                })();
+
+          const payload = JSON.parse(raw || "{}") as ChatWidget;
+          if (!payload?.id || !payload?.type || !payload?.title) return;
+          addChatWidget(payload);
+        } catch (error) {
+          console.error("Failed to read chat widget stream:", error);
+        }
+      });
+
+      await room.connect(getLiveKitUrl(), token, {
+        rtcConfig: getRtcConfig(),
+        peerConnectionTimeout: 25_000,
+      });
       return room;
     },
-    [addMessage, setConnected, setCurrentTranscript]
+    [addChatWidget, addMessage, addQuizWidget, setAgentReady, setConnected, setCurrentTranscript]
   );
 
   const disconnect = useCallback(() => {
@@ -286,14 +389,15 @@ export function useLiveKit() {
       roomRef.current.disconnect();
       roomRef.current = null;
       setConnected(false);
+      setAgentReady(false);
       setCurrentTranscript("");
       setLastError(null);
     }
-  }, [addMessage, setConnected, setCurrentTranscript]);
+  }, [addMessage, setAgentReady, setConnected, setCurrentTranscript]);
 
   const sendText = useCallback(async (text: string) => {
     const room = roomRef.current;
-    if (!room || sendingRef.current) return;
+    if (!room || sendingRef.current || !useChatStore.getState().agentReady) return;
 
     sendingRef.current = true;
     addMessage({ role: "user", content: text });
