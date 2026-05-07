@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, desc, func, or_, select
+from sqlalchemy import delete, desc, extract, func, or_, select
 
 from app.core.auth import get_current_user, require_role
 from app.database.connection import get_session_factory
@@ -18,6 +18,10 @@ router = APIRouter(tags=["Admin"])
 CEFRLevel = Literal["A1", "A2", "B1", "B2", "C1", "C2"]
 UserRole = Literal["learner", "admin"]
 SubscriptionPlan = Literal["free", "plus", "ultra"]
+
+VALID_CEFR_LEVELS = {"A1", "A2", "B1", "B2", "C1", "C2"}
+VALID_ROLES = {"learner", "admin"}
+VALID_SUBSCRIPTION_PLANS = {"free", "plus", "ultra"}
 
 
 class AdminUserResponse(BaseModel):
@@ -84,16 +88,17 @@ class AdminUserUpdateRequest(BaseModel):
 
 def _user_row_to_response(row) -> AdminUserResponse:
     user = getattr(row, "user", None) or getattr(row, "User", None) or row[0]
+    now = datetime.utcnow()
     return AdminUserResponse(
         id=user.id,
         email=user.email,
         name=user.name,
         native_language=user.native_language,
-        cefr_level=user.cefr_level,
-        role=user.role,
-        subscription_plan=user.subscription_plan or "free",
-        created_at=user.created_at,
-        updated_at=user.updated_at,
+        cefr_level=user.cefr_level if user.cefr_level in VALID_CEFR_LEVELS else "B1",
+        role=user.role if user.role in VALID_ROLES else "learner",
+        subscription_plan=user.subscription_plan if user.subscription_plan in VALID_SUBSCRIPTION_PLANS else "free",
+        created_at=user.created_at or now,
+        updated_at=user.updated_at or user.created_at or now,
         session_count=int(row.session_count or 0),
         total_minutes=float(row.total_minutes or 0),
         last_session_at=row.last_session_at,
@@ -106,9 +111,15 @@ def _identity_response(user: User) -> AdminIdentityResponse:
         email=user.email,
         name=user.name,
         native_language=user.native_language,
-        cefr_level=user.cefr_level,
-        role=user.role,
-        subscription_plan=user.subscription_plan or "free",
+        cefr_level=user.cefr_level if user.cefr_level in VALID_CEFR_LEVELS else "B1",
+        role=user.role if user.role in VALID_ROLES else "learner",
+        subscription_plan=user.subscription_plan if user.subscription_plan in VALID_SUBSCRIPTION_PLANS else "free",
+    )
+
+def _practice_duration_minutes_expr():
+    return func.coalesce(
+        extract("epoch", PracticeSession.ended_at - PracticeSession.started_at) / 60.0,
+        0.0,
     )
 
 
@@ -163,7 +174,7 @@ async def list_users(
             select(
                 PracticeSession.user_id.label("user_id"),
                 func.count(PracticeSession.id).label("session_count"),
-                func.coalesce(func.sum(PracticeSession.duration_minutes), 0).label("total_minutes"),
+                func.coalesce(func.sum(_practice_duration_minutes_expr()), 0).label("total_minutes"),
                 func.max(PracticeSession.started_at).label("last_session_at"),
             )
             .group_by(PracticeSession.user_id)
@@ -239,7 +250,7 @@ async def update_user(
             await session.execute(
                 select(
                     func.count(PracticeSession.id).label("session_count"),
-                    func.coalesce(func.sum(PracticeSession.duration_minutes), 0).label("total_minutes"),
+                    func.coalesce(func.sum(_practice_duration_minutes_expr()), 0).label("total_minutes"),
                     func.max(PracticeSession.started_at).label("last_session_at"),
                 ).where(PracticeSession.user_id == user.id)
             )
